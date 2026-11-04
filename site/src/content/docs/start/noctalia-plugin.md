@@ -52,7 +52,7 @@ The robot is in the agent's screenshots, as any window is. To keep it out of the
 
 ## Settings
 
-`niri-computer-use binary` is empty by default: the plugin then runs `niri-computer-use` from `PATH`, then `~/.local/bin` and `~/.cargo/bin`, since Noctalia's `PATH` often has neither. Set it to use another build. `Show a robot where the agent acts` turns the [overlay](#overlay) on or off; it is on by default. The other settings turn each notification on or off and set the glow's width. The bar widget has two of its own: whether it shows while no agent drives, and whether it shows the agent's name.
+`niri-computer-use binary` is empty by default: the plugin then runs `niri-computer-use` from `PATH`, then `~/.local/bin` and `~/.cargo/bin`, since Noctalia's `PATH` often has neither. Set it to use another build. `Show a robot where the agent acts` turns the [overlay](#overlay) on or off; it is on by default. `Robot size` makes the robot 40, 56 or 72 pixels tall, before Noctalia's UI scale, with its caption to match; it is 56 by default. The other settings turn each notification on or off and set the glow's width. The bar widget has two of its own: whether it shows while no agent drives, and whether it shows the agent's name.
 
 ## What it says when it can't watch
 

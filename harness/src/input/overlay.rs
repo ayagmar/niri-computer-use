@@ -29,11 +29,11 @@ const NAMESPACE: &str = "noctalia-plugin:ayagmar/niri-computer-use:robot";
 /// The oldest Noctalia with `[[layer]]` entries, plugin API 36.
 const NOCTALIA: (u32, u32) = (5, 4);
 const NOCTALIA_DEADLINE: Duration = Duration::from_secs(190);
-/// The antenna tip's fill in `robot/*.svg`, and its centre in the 32x32 frame.
+/// The antenna tip's fill in `robot/*.svg`, and its centre in the 56x56 frame.
 const ANTENNA: [u8; 3] = [0x4c, 0x8d, 0xff];
-const TIP: (f64, f64) = (16.0, 3.2);
+const TIP: (f64, f64) = (28.0, 5.0);
 /// `lib/stage.luau`'s sizes, in logical pixels at a UI scale of 1.
-const SPRITE: f64 = 32.0;
+const SPRITE: f64 = 56.0;
 const GAP: f64 = 12.0;
 /// How far the antenna may be from where it should be, in logical pixels: its circle
 /// rasterized at fractional scales, and the robot's position rounded to whole pixels.

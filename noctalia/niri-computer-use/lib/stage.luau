@@ -12,12 +12,9 @@ local live = require("./live.luau")
 
 local M = {}
 
--- Sizes in logical pixels at a UI scale of 1.
-M.SPRITE = 32
-M.CAPTION_MIN = 40
-M.CAPTION_MAX = 168
--- Between the robot and its caption.
-M.INNER = 6
+-- The robot's sizes, from the `overlay_size` setting, in logical pixels at a UI scale of 1.
+M.SIZES = { small = 40, medium = 56, large = 72 }
+M.MEDIUM = 56
 -- Between the robot and the point or box it acts on.
 M.GAP = 12
 -- Kept clear of the output's edges.
@@ -66,9 +63,51 @@ type Point = live.Point
 type Rect = live.Rect
 type Area = { width: number, height: number }
 
+-- What the robot's size and the UI scale make of the robot and its caption. The caption's
+-- sizes are at a UI scale of 1, as the tree gives them; `robot` and `wide`, the robot and
+-- the widest caption beside it, are in logical pixels on the output.
+export type Dims = {
+  size: number,
+  scale: number,
+  font: number,
+  captionHeight: number,
+  char: number,
+  pad: number,
+  captionMin: number,
+  captionMax: number,
+  -- Between the robot and its caption.
+  inner: number,
+  robot: number,
+  wide: number,
+}
+
+-- The caption's font is 13 at the medium size, and the rest of it follows the font: a
+-- 32-pixel robot had an 11-point caption 20 high, 40 to 168 wide, 8 in from its ends.
+function M.dims(size: number, scale: number): Dims
+  local font = 13 * size / 56
+  local k = font / 11
+  local inner = math.floor(size / 7 + 0.5)
+  local captionMax = math.floor(168 * k + 0.5)
+  return {
+    size = size,
+    scale = scale,
+    font = font,
+    captionHeight = math.floor(24 * size / 56 + 0.5),
+    char = 7 * k,
+    pad = 8 * k,
+    captionMin = math.floor(40 * k + 0.5),
+    captionMax = captionMax,
+    inner = inner,
+    robot = size * scale,
+    wide = (inner + captionMax) * scale,
+  }
+end
+
 export type Env = {
   -- Noctalia's UI scale, which sizes the robot and its caption.
   scale: number,
+  -- The robot's size at a UI scale of 1, one of SIZES.
+  size: number,
   -- The output the robot waits on when it has no target.
   focused: string,
   -- Each output's logical size, for one no action has named yet.
@@ -102,6 +141,8 @@ export type Frame = {
   -- The caption's palette role and its width in logical pixels at a UI scale of 1.
   role: string,
   width: number,
+  -- The robot's size at a UI scale of 1.
+  size: number,
   side: string,
   opacity: number,
   -- Popping in or gliding, so nextMs is the next frame's.
@@ -153,15 +194,14 @@ local function alternate(a: string, b: string, startMs: number, nowMs: number, e
 end
 
 -- The caption's width in logical pixels at a UI scale of 1, estimated from its length.
-function M.captionWidth(text: string): number
+function M.captionWidth(text: string, d: Dims): number
   local chars = utf8.len(text) or #text
-  return math.clamp(7 * chars + 16, M.CAPTION_MIN, M.CAPTION_MAX)
+  return math.clamp(math.floor(d.char * chars + 2 * d.pad + 0.5), d.captionMin, d.captionMax)
 end
 
 -- Whether a robot at `spot`, with the widest caption on its side, keeps clear of the edges.
-local function fits(spot: Spot, area: Area, scale: number): boolean
-  local robot = M.SPRITE * scale
-  local wide = (M.INNER + M.CAPTION_MAX) * scale
+local function fits(spot: Spot, area: Area, d: Dims): boolean
+  local robot, wide = d.robot, d.wide
   local left = if spot.side == "left" then spot.x - wide else spot.x
   local right = if spot.side == "left" then spot.x + robot else spot.x + robot + wide
   return left >= M.MARGIN
@@ -171,9 +211,8 @@ local function fits(spot: Spot, area: Area, scale: number): boolean
 end
 
 -- `spot` moved as little as needed to keep clear of the edges, where the area allows.
-local function clamped(spot: Spot, area: Area, scale: number): Spot
-  local robot = M.SPRITE * scale
-  local wide = (M.INNER + M.CAPTION_MAX) * scale
+local function clamped(spot: Spot, area: Area, d: Dims): Spot
+  local robot, wide = d.robot, d.wide
   local minX = if spot.side == "left" then M.MARGIN + wide else M.MARGIN
   local maxX = if spot.side == "left" then area.width - M.MARGIN - robot else area.width - M.MARGIN - robot - wide
   local maxY = area.height - M.MARGIN - robot
@@ -191,8 +230,8 @@ local CORNERS = { { -1, -1 }, { 1, -1 }, { -1, 1 }, { 1, 1 } }
 
 -- The spot beside point `p`, its nearest corner GAP away on both axes, and which corner
 -- was taken. `only` takes that corner, as a drag's start does its end's.
-function M.besidePoint(output: string, p: Point, area: Area, scale: number, only: number?): (Spot, number)
-  local robot = M.SPRITE * scale
+function M.besidePoint(output: string, p: Point, area: Area, d: Dims, only: number?): (Spot, number)
+  local robot = d.robot
   local function corner(i: number): Spot
     local c = CORNERS[i]
     return {
@@ -203,18 +242,18 @@ function M.besidePoint(output: string, p: Point, area: Area, scale: number, only
     }
   end
   for i = 1, #CORNERS do
-    if (only == nil or only == i) and fits(corner(i), area, scale) then
+    if (only == nil or only == i) and fits(corner(i), area, d) then
       return corner(i), i
     end
   end
   local i = only or 1
-  return clamped(corner(i), area, scale), i
+  return clamped(corner(i), area, d), i
 end
 
 -- The spot beside box `b`: right of it, left, below or above, or inside its top-right
 -- corner when it fills the output.
-function M.besideBox(output: string, b: Rect, area: Area, scale: number): Spot
-  local robot = M.SPRITE * scale
+function M.besideBox(output: string, b: Rect, area: Area, d: Dims): Spot
+  local robot = d.robot
   local cx, cy = b.x + b.width / 2 - robot / 2, b.y + b.height / 2 - robot / 2
   local options: { Spot } = {
     { output = output, x = b.x + b.width + M.GAP, y = cy, side = "right" },
@@ -223,18 +262,18 @@ function M.besideBox(output: string, b: Rect, area: Area, scale: number): Spot
     { output = output, x = cx, y = b.y - M.GAP - robot, side = "right" },
   }
   for _, spot in options do
-    if fits(spot, area, scale) then
+    if fits(spot, area, d) then
       return spot
     end
   end
   local inside = { output = output, x = b.x + b.width - M.MARGIN - robot, y = b.y + M.MARGIN, side = "left" }
-  return clamped(inside, area, scale)
+  return clamped(inside, area, d)
 end
 
-function M.home(output: string, area: Area, scale: number): Spot
-  local robot = M.SPRITE * scale
+function M.home(output: string, area: Area, d: Dims): Spot
+  local robot = d.robot
   local spot = { output = output, x = area.width - M.HOME - robot, y = area.height - M.HOME - robot, side = "left" }
-  return clamped(spot, area, scale)
+  return clamped(spot, area, d)
 end
 
 local function areaOf(view: any, env: Env, output: string): Area
@@ -433,17 +472,16 @@ end
 
 -- The spot a target puts the robot on, and for a drag where its glide starts. Only a
 -- record moves the robot: resting, it stays where it stands on that output.
-local function place(target: Target, view: any, st: Stage, env: Env, still: boolean): (Spot, Spot?)
+local function place(target: Target, view: any, st: Stage, env: Env, d: Dims, still: boolean): (Spot, Spot?)
   local area = areaOf(view, env, target.output)
-  local scale = env.scale
   if target.kind == "point" then
-    return (M.besidePoint(target.output, target.point :: Point, area, scale))
+    return (M.besidePoint(target.output, target.point :: Point, area, d))
   elseif target.kind == "drag" then
-    local to, corner = M.besidePoint(target.output, target.to :: Point, area, scale)
-    local from = M.besidePoint(target.output, target.point :: Point, area, scale, corner)
+    local to, corner = M.besidePoint(target.output, target.to :: Point, area, d)
+    local from = M.besidePoint(target.output, target.point :: Point, area, d, corner)
     return to, from
   elseif target.kind == "box" then
-    return M.besideBox(target.output, target.box :: Rect, area, scale)
+    return M.besideBox(target.output, target.box :: Rect, area, d)
   end
   local at = st.at
   local stays = at ~= nil and at.output == target.output and target.kind ~= "home"
@@ -453,7 +491,7 @@ local function place(target: Target, view: any, st: Stage, env: Env, still: bool
   if stays then
     return at :: Spot
   end
-  return M.home(target.output, area, scale)
+  return M.home(target.output, area, d)
 end
 
 local function sameSpot(a: Spot?, b: Spot): boolean
@@ -507,6 +545,7 @@ local HIDDEN: Frame = {
   caption = nil,
   role = "primary",
   width = 0,
+  size = M.MEDIUM,
   side = "left",
   opacity = 0,
   moving = false,
@@ -520,7 +559,8 @@ function M.step(st: Stage, view: any, nowMs: number, env: Env): Frame
     st.at, st.from, st.popMs, st.last = nil, nil, nil, nil
     return table.clone(HIDDEN)
   end
-  local spot, from = place(found.target, view, st, env, found.still)
+  local d = M.dims(env.size, env.scale)
+  local spot, from = place(found.target, view, st, env, d, found.still)
   -- Moving to another output makes Noctalia build the layer there, which draws its first
   -- frame some time later, in the middle of the agent's look. So while it looks, the
   -- robot stays as it was, or stays away, and moves at the call's end.
@@ -538,10 +578,10 @@ function M.step(st: Stage, view: any, nowMs: number, env: Env): Frame
   end
   -- The caption never moves: it shows once the robot has arrived.
   local caption = if gliding then nil else found.caption
-  local width = if caption then M.captionWidth(caption) else 0
+  local width = if caption then M.captionWidth(caption, d) else 0
   local side = (st.at :: Spot).side
   if caption and side == "left" then
-    x -= (M.INNER + width) * env.scale
+    x -= (d.inner + width) * env.scale
   end
   local nextMs = found.nextMs
   -- An update interval rather than frame ticks drives a pop-in or a glide: Noctalia
@@ -563,6 +603,7 @@ function M.step(st: Stage, view: any, nowMs: number, env: Env): Frame
     caption = caption,
     role = found.role,
     width = width,
+    size = env.size,
     side = side,
     opacity = if popping then math.floor((nowMs - (st.popMs :: number)) / M.POP_MS * 4) / 4 else 1,
     moving = moving,
@@ -577,7 +618,7 @@ function M.key(frame: Frame): string
   if not frame.visible then
     return "hidden"
   end
-  return `{frame.x},{frame.y}|{frame.pose}|{frame.caption or ""}|{frame.role}|{frame.side}|{frame.width}|{frame.opacity}`
+  return `{frame.x},{frame.y}|{frame.pose}|{frame.caption or ""}|{frame.role}|{frame.side}|{frame.width}|{frame.size}|{frame.opacity}`
 end
 
 return M

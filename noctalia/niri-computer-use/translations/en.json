@@ -28,6 +28,15 @@
       "label": "Show a robot where the agent acts",
       "description": "While an agent holds the desktop, a small robot and a caption sit beside each action's target. Clicks pass through them."
     },
+    "overlay_size": {
+      "label": "Robot size",
+      "description": "How large the robot and its caption are, before the UI scale.",
+      "options": {
+        "small": "Small (40 px)",
+        "medium": "Medium (56 px)",
+        "large": "Large (72 px)"
+      }
+    },
     "show_when_idle": {
       "label": "Show while no agent drives",
       "description": "Off hides the capsule until an agent takes the desktop."

@@ -2226,3 +2226,9 @@ Dependabot's five merged updates (#57, #58, #59, #61, #62), checked against the 
 | `taiki-e/install-action` | v2.87.31 | v2.88.0 | 2026-10-28 | `86f7a0ffb25f40114606501a311ebcfaf882ea32`, in `ci.yml` and `release.yml`. Dependabot proposed v2.87.32 (2026-10-26); v2.88.0 is the newest at least 7 days old (v2.88.1 is from 2026-10-30). It only adds `similarity-rs`. |
 
 The action's commit is the one its tag names in the action's repository (`git ls-remote`; the tag isn't annotated, so there is nothing to peel). No new crate entered `Cargo.lock`. zbus 6 (#60) stays out: it is a migration of its own.
+
+## 2026-11-04: a bigger robot
+
+- The owner found the 32-pixel robot too small. It is now 56 logical pixels by default, before Noctalia's UI scale, and the `overlay_size` setting makes it 40, 56 or 72. This replaces the 2026-10-30 entry's 32 pixels; the placement rules there are unchanged.
+- The caption follows the robot: its font is 13 points at 56 pixels, scaled with the size. Its height, padding and width limits keep the 32-pixel robot's proportions to its 11-point font (20 high, 8 in from each end, 40 to 168 wide), so the widest caption is 199 pixels at 56. `stage.dims` computes all of it once, for placement and for the tree, so the two can't disagree.
+- The frames are redrawn on a 56-unit grid, with 2.25-unit strokes, a dark visor with two eyes and a light on the chest, rather than the 32-pixel drawing scaled up, whose 1.5-unit lines looked thin at 56. The antenna's tip stays a solid `#4c8dff` dot, now at (28, 5), where the nested overlay case looks for it.

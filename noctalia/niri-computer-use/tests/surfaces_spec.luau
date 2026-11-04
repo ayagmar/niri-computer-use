@@ -455,6 +455,7 @@ end)
 t.group("robot", function()
   local F = fx.live()
   local stage = env.module("lib/stage.luau")
+  local D = stage.dims(stage.MEDIUM, 1)
 
   -- The service and the robot's layer on HDMI-A-1, with the fixtures' agent driving.
   local function overlay()
@@ -537,8 +538,8 @@ t.group("robot", function()
     t.contains(host.texts(host.layer.tree), "click")
     local left, top = corner(host.layer.tree)
     -- Above-left of the point, with the caption to the robot's left.
-    t.eq(left + (stage.INNER + stage.captionWidth("click")) + stage.SPRITE, 650 - stage.GAP)
-    t.eq(top, math.floor(320.4 - stage.GAP - stage.SPRITE + 0.5))
+    t.eq(left + (D.inner + stage.captionWidth("click", D)) + D.size, 650 - stage.GAP)
+    t.eq(top, math.floor(320.4 - stage.GAP - D.size + 0.5))
   end)
 
   t.test("a target on another output moves the layer there instead of drawing here", function()
@@ -593,7 +594,7 @@ t.group("robot", function()
     robot.call("update")
     t.ok(host.updateInterval > stage.FRAME_MS, "slower once there")
     -- The caption shows on arrival, left of the robot.
-    local there = corner(host.layer.tree) + stage.INNER + stage.captionWidth("click")
+    local there = corner(host.layer.tree) + D.inner + stage.captionWidth("click", D)
     for i = 2, #steps do
       t.ok(math.abs(there - steps[i]) < math.abs(there - steps[i - 1]), "a step toward the click each frame")
     end
@@ -612,8 +613,8 @@ t.group("robot", function()
     host.event({ event = "hello", format = 1 })
     host.event(fx.state(nil, { pending = true }))
     local left, top = corner(host.layer.tree)
-    t.eq(left + stage.INNER + stage.captionWidth("asking to drive") + stage.SPRITE, 1280 - stage.HOME)
-    t.eq(top + stage.SPRITE, 800 - stage.HOME)
+    t.eq(left + D.inner + stage.captionWidth("asking to drive", D) + D.size, 1280 - stage.HOME)
+    t.eq(top + D.size, 800 - stage.HOME)
   end)
 
   t.test("places the robot in UI-scaled units, as Noctalia scales the tree", function()
@@ -623,8 +624,40 @@ t.group("robot", function()
     host.nowMs += 500
     robot.call("update")
     local left, top = corner(host.layer.tree)
-    t.near(left * 1.25 + (stage.INNER + stage.captionWidth("click") + stage.SPRITE) * 1.25, 650 - stage.GAP, 0.5)
-    t.near(top * 1.25 + stage.SPRITE * 1.25, 320.4 - stage.GAP, 0.5)
+    t.near(left * 1.25 + (D.inner + stage.captionWidth("click", D) + D.size) * 1.25, 650 - stage.GAP, 0.5)
+    t.near(top * 1.25 + D.size * 1.25, 320.4 - stage.GAP, 0.5)
+  end)
+
+  -- The bug: the size setting read under another name, or a value it doesn't list taken
+  -- as a size, so the robot never grew or drew at size zero.
+  t.test("draws the robot and its caption at the size the setting names", function()
+    for named, size in { small = 40, medium = 56, large = 72, huge = 56 } do
+      local host, robot = overlay()
+      host.config.overlay_size = named
+      host.event(F.click_aim)
+      host.nowMs += 500
+      robot.call("update")
+      local image = images(host.layer.tree)[1]
+      t.eq(image.props.width, size, `{named}: sprite`)
+      local label = host.find(host.layer.tree, function(n)
+        return n.type == "label"
+      end)
+      t.near(label.props.fontSize, 13 * size / 56, 0.001, `{named}: caption font`)
+      local left = corner(host.layer.tree)
+      local d = stage.dims(size, 1)
+      t.eq(left + d.inner + stage.captionWidth("click", d) + size, 650 - stage.GAP, `{named}: placed by its size`)
+    end
+  end)
+
+  -- The bug: a frame redrawn with its antenna elsewhere, where the nested overlay case,
+  -- which finds the robot by that dot, doesn't look.
+  t.test("every frame has the antenna's solid #4c8dff tip at the same place", function()
+    for _, pose in stage.POSES do
+      local svg = env.sources[`robot/{pose}.svg`]
+      t.ok(svg ~= nil, `{pose} is in the plugin`)
+      t.ok(svg:find('<circle cx="28" cy="5" r="3.4" fill="#4c8dff" stroke="none"/>', 1, true) ~= nil, `{pose}: the tip`)
+      t.ok(svg:find('viewBox="0 0 56 56"', 1, true) ~= nil, `{pose}: drawn at 56`)
+    end
   end)
 
   t.test("draws nothing once the agent has gone", function()
@@ -635,6 +668,20 @@ t.group("robot", function()
     robot.call("update")
     t.eq(#images(host.layer.tree), 0)
   end)
+end)
+
+-- The bug: a setting or one of its options without an English string, which Noctalia
+-- shows as its raw key.
+t.test("every setting's label, description and option has an English string", function()
+  local host = env.host()
+  local tr = host.globals.noctalia.tr
+  local manifest = env.sources["plugin.toml"]
+  local keys = 0
+  for key in manifest:gmatch('_key = "([%w_.]+)"') do
+    keys += 1
+    t.ok(tr(key) ~= key, `{key} is translated`)
+  end
+  t.ok(keys > 10, "the manifest's keys were read")
 end)
 
 return nil

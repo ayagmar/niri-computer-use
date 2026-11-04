@@ -13,9 +13,10 @@ local F = fx.live()
 local T = time.parse("2026-10-30T12:00:00.500Z")
 local HDMI = { width = 2048, height = 1152 }
 
-local function envAt(scale)
+local function envAt(scale, size)
   return {
     scale = scale or 1,
+    size = size or stage.MEDIUM,
     focused = "HDMI-A-1",
     areas = { ["HDMI-A-1"] = HDMI, ["DP-2"] = { width = 1280, height = 720 } },
     tr = tr,
@@ -23,6 +24,7 @@ local function envAt(scale)
 end
 
 local ENV = envAt(1)
+local D = stage.dims(stage.MEDIUM, 1)
 
 -- A desk where the fixtures' agent holds the lease, and a stage drawing it.
 local function desk(session)
@@ -46,8 +48,9 @@ end
 
 -- The rectangle the robot and its caption cover in a frame.
 local function covers(f, scale)
-  local width = stage.SPRITE * scale + (if f.caption then (stage.INNER + f.width) * scale else 0)
-  return f.x, f.y, f.x + width, f.y + stage.SPRITE * scale
+  local d = stage.dims(f.size, scale)
+  local width = d.robot + (if f.caption then (d.inner + f.width) * scale else 0)
+  return f.x, f.y, f.x + width, f.y + d.robot
 end
 
 -- How far point `p` is from a rectangle on each axis.
@@ -68,20 +71,22 @@ t.group("stage", function()
     -- The bug: the robot covering the point the agent clicks, or reaching off the output.
     t.test("beside every point it stays on the output and GAP away from the point on both axes", function()
       for _, area in { { width = 1280, height = 720 }, HDMI } do
-        for _, scale in { 1, 1.5 } do
-          for _, fx_ in { 0, 0.5, 1 } do
-            for _, fy in { 0, 0.5, 1 } do
-              local p = { x = fx_ * area.width, y = fy * area.height }
-              local spot = stage.besidePoint("A", p, area, scale)
-              local robot = stage.SPRITE * scale
-              local wide = (stage.INNER + stage.CAPTION_MAX) * scale
-              local left = if spot.side == "left" then spot.x - wide else spot.x
-              local right = if spot.side == "left" then spot.x + robot else spot.x + robot + wide
-              local label = `{area.width}x{area.height} at {scale}, point {p.x},{p.y}`
-              t.ok(left >= stage.MARGIN and right <= area.width - stage.MARGIN, label .. ": across")
-              t.ok(spot.y >= stage.MARGIN and spot.y + robot <= area.height - stage.MARGIN, label .. ": down")
-              local dx, dy = clearance(p, left, spot.y, right, spot.y + robot)
-              t.ok(dx >= stage.GAP and dy >= stage.GAP, label .. ": clear of the point")
+        for _, scale in { 1, 1.25, 1.5 } do
+          for _, size in { 40, 56, 72 } do
+            for _, fx_ in { 0, 0.5, 1 } do
+              for _, fy in { 0, 0.5, 1 } do
+                local p = { x = fx_ * area.width, y = fy * area.height }
+                local d = stage.dims(size, scale)
+                local spot = stage.besidePoint("A", p, area, d)
+                local robot, wide = d.robot, d.wide
+                local left = if spot.side == "left" then spot.x - wide else spot.x
+                local right = if spot.side == "left" then spot.x + robot else spot.x + robot + wide
+                local label = `{area.width}x{area.height} at {scale}, size {size}, point {p.x},{p.y}`
+                t.ok(left >= stage.MARGIN and right <= area.width - stage.MARGIN, label .. ": across")
+                t.ok(spot.y >= stage.MARGIN and spot.y + robot <= area.height - stage.MARGIN, label .. ": down")
+                local dx, dy = clearance(p, left, spot.y, right, spot.y + robot)
+                t.ok(dx >= stage.GAP and dy >= stage.GAP, label .. ": clear of the point")
+              end
             end
           end
         end
@@ -90,24 +95,24 @@ t.group("stage", function()
 
     -- The bug: the robot covering a menu that opens below-right of the pointer.
     t.test("with room above-left of the point, the robot sits there with its caption to its left", function()
-      local spot, corner = stage.besidePoint("A", { x = 650, y = 320.4 }, HDMI, 1)
+      local spot, corner = stage.besidePoint("A", { x = 650, y = 320.4 }, HDMI, D)
       t.eq(corner, 1)
       t.eq(spot.side, "left")
-      t.eq(spot.x, 650 - stage.GAP - stage.SPRITE)
-      t.near(spot.y, 320.4 - stage.GAP - stage.SPRITE, 0.001)
+      t.eq(spot.x, 650 - stage.GAP - D.robot)
+      t.near(spot.y, 320.4 - stage.GAP - D.robot, 0.001)
     end)
 
     t.test("beside a box it keeps off the box, and inside the corner of one that fills the output", function()
       local box = { x = 100, y = 50, width = 800, height = 600 }
-      local spot = stage.besideBox("A", box, HDMI, 1)
+      local spot = stage.besideBox("A", box, HDMI, D)
       t.eq(spot.x, box.x + box.width + stage.GAP, "right of the box")
       local wide = { x = 0, y = 0, width = 2048, height = 1152 }
-      local inside = stage.besideBox("A", wide, HDMI, 1)
-      t.eq(inside.x, 2048 - stage.MARGIN - stage.SPRITE)
+      local inside = stage.besideBox("A", wide, HDMI, D)
+      t.eq(inside.x, 2048 - stage.MARGIN - D.robot)
       t.eq(inside.y, stage.MARGIN)
       for _, b in { { x = 1500, y = 300, width = 540, height = 400 }, { x = 8, y = 8, width = 300, height = 1100 } } do
-        local s = stage.besideBox("A", b, HDMI, 1.5)
-        local robot = stage.SPRITE * 1.5
+        local s = stage.besideBox("A", b, HDMI, stage.dims(stage.MEDIUM, 1.5))
+        local robot = stage.MEDIUM * 1.5
         local apart = s.x + robot <= b.x or s.x >= b.x + b.width or s.y + robot <= b.y or s.y >= b.y + b.height
         t.ok(apart, `box at {b.x},{b.y}`)
       end
@@ -161,7 +166,7 @@ t.group("stage", function()
       t.eq(frame(model, st, T + 1710).caption, "click")
       local quiet = frame(model, st, T + 1700 + stage.CAPTION_MS)
       t.eq(quiet.caption, nil)
-      t.eq(quiet.x, looked.x + (stage.INNER + looked.width), "the caption went, the robot stayed")
+      t.eq(quiet.x, looked.x + (D.inner + looked.width), "the caption went, the robot stayed")
     end)
 
     t.test("at a larger UI scale the robot keeps the same gap to the point", function()
@@ -298,7 +303,7 @@ t.group("stage", function()
       t.eq(start.pose, "grab")
       t.ok(start.moving)
       t.ok(not done.moving)
-      local from = stage.besidePoint("HDMI-A-1", { x = 80.4, y = 80.4 }, HDMI, 1, 1)
+      local from = stage.besidePoint("HDMI-A-1", { x = 80.4, y = 80.4 }, HDMI, D, 1)
       t.eq(start.side, "left")
       t.eq(start.caption, nil, "the caption waits for the robot to arrive")
       t.near(start.x, from.x, 1)

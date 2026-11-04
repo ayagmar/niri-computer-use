@@ -25,15 +25,22 @@ local function areas()
   return out
 end
 
+-- The robot's size from the `overlay_size` setting, medium for one it doesn't know.
+local function size(): number
+  local named = noctalia.getConfig("overlay_size")
+  return if type(named) == "string" and stage.SIZES[named] then stage.SIZES[named] else stage.MEDIUM
+end
+
 local function tree(frame, scale: number)
+  local d = stage.dims(frame.size, scale)
   local sprite = {}
   -- Every frame stays mounted, so each image is read once, and only one shows.
   for _, pose in stage.POSES do
     table.insert(sprite, ui.image({
       key = pose,
       path = `robot/{pose}.svg`,
-      width = stage.SPRITE,
-      height = stage.SPRITE,
+      width = d.size,
+      height = d.size,
       visible = pose == frame.pose,
     }))
   end
@@ -42,13 +49,19 @@ local function tree(frame, scale: number)
     local caption = ui.row({
       key = "caption",
       width = frame.width,
-      height = 20,
-      paddingH = 8,
-      radius = 10,
+      height = d.captionHeight,
+      paddingH = d.pad,
+      radius = d.captionHeight / 2,
       align = "center",
       fill = frame.role,
     }, {
-      ui.label({ text = frame.caption, fontSize = 11, color = `on_{frame.role}`, maxLines = 1, maxWidth = frame.width - 16 }),
+      ui.label({
+        text = frame.caption,
+        fontSize = d.font,
+        color = `on_{frame.role}`,
+        maxLines = 1,
+        maxWidth = frame.width - 2 * d.pad,
+      }),
     })
     table.insert(group, if frame.side == "left" then 1 else #group + 1, caption)
   end
@@ -57,7 +70,7 @@ local function tree(frame, scale: number)
     ui.row({ key = "top", width = 1, height = frame.y / scale }, {}),
     ui.row({ align = "center" }, {
       ui.row({ key = "left", width = frame.x / scale, height = 1 }, {}),
-      ui.row({ key = "group", gap = stage.INNER, align = "center", opacity = frame.opacity }, group),
+      ui.row({ key = "group", gap = d.inner, align = "center", opacity = frame.opacity }, group),
     }),
   })
 end
@@ -77,6 +90,7 @@ local function draw()
   local scale = tonumber(noctalia.getSetting("accessibility.ui_scale")) or 1
   local frame = stage.step(st, view, nowMs, {
     scale = scale,
+    size = size(),
     focused = noctalia.focusedOutputName() or here,
     areas = known,
     tr = noctalia.tr,
