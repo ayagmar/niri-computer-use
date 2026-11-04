@@ -2173,9 +2173,13 @@ async fn release_desktop_reports_a_users_window_that_already_has_focus_as_focuse
     desk.server
         .structured_with("release_desktop", release(false))
         .await;
-    while desk.server.structured("desktop_state").await["focused_window"] != 1 {
-        tokio::time::sleep(Duration::from_millis(20)).await;
-    }
+    let focused = tokio::time::timeout(Duration::from_secs(5), async {
+        while desk.server.structured("desktop_state").await["focused_window"] != 1 {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await;
+    assert!(focused.is_ok(), "window 1 never had focus");
     let acquired = desk.server.structured("acquire_desktop").await;
     assert_eq!(acquired["users_window"], 1, "{acquired}");
 
@@ -2254,11 +2258,11 @@ async fn a_client_that_goes_mid_action_frees_the_lease_at_once() {
     );
     let went = Instant::now();
     desk.server.stop().await;
-    // An action left running would hold the lease until grim's five-second deadline. Process
-    // exit alone took 671 ms on a loaded aarch64 runner, so the bound sits at 2 s: clear of
-    // that and clear of the deadline.
+    // An action left running would hold the lease until the settle's 1.5 s limit
+    // (`settle::LIMIT`) drops grim. Process exit alone took 671 ms on a loaded aarch64
+    // runner, so the bound sits at 1 s: clear of that and under the limit.
     assert!(
-        went.elapsed() < Duration::from_secs(2),
+        went.elapsed() < Duration::from_secs(1),
         "{:?}",
         went.elapsed()
     );
