@@ -255,10 +255,20 @@ local function schedule(frame, nowMs: number)
   end
 end
 
--- Removes the area file, before a frame that doesn't think is drawn.
+-- This instance's name in the area file.
+local function writer(output: string): string
+  return `{output} {incarnation}`
+end
+
+-- Removes the area file, before a frame that doesn't think is drawn, unless another
+-- instance wrote it since.
 local function retract()
   if published then
-    noctalia.removeFile(published.path)
+    local text = noctalia.readFile(published.path)
+    local current = if text then noctalia.json.decode(text) else nil
+    if type(current) == "table" and current.incarnation == published.writer then
+      noctalia.removeFile(published.path)
+    end
     published = nil
   end
 end
@@ -273,7 +283,7 @@ local function publish(path: string, output: string, rect, nowMs: number): boole
   local json = noctalia.json.encode({
     output = output,
     rect = { x = rect.x, y = rect.y, width = rect.width, height = rect.height },
-    incarnation = `{output} {incarnation}`,
+    incarnation = writer(output),
     ts = math.floor(nowMs),
   })
   local tmp = `{path}.{incarnation}.tmp`
@@ -282,7 +292,7 @@ local function publish(path: string, output: string, rect, nowMs: number): boole
     retract()
     return false
   end
-  published = { path = path, said = said, atMs = nowMs }
+  published = { path = path, said = said, atMs = nowMs, writer = writer(output) }
   return true
 end
 

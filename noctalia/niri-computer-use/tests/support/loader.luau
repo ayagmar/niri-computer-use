@@ -66,11 +66,16 @@ function M.entry(sources, host, entryPath: string)
     return load(path)
   end
   function runtime.start()
+    host.destroyed[entryPath] = nil
+    local loading = host.loading
+    host.loading = entryPath
     load(entryPath, true)
+    host.loading = loading
     return runtime
   end
   -- Calls a global the entry defined, if any.
   function runtime.call(name: string, ...)
+    assert(not host.destroyed[entryPath], `{entryPath}'s runtime was destroyed`)
     local fn = rawget(env, name)
     assert(type(fn) == "function", `entry {entryPath} does not define {name}()`)
     return fn(...)

@@ -467,7 +467,7 @@ t.group("robot", function()
     host.focusedOutput = "HDMI-A-1"
     host.layer.output = "HDMI-A-1"
     host.nowMs = env.module("lib/time.luau").parse("2026-10-30T12:00:00.500Z")
-    env.start(host, "service.luau")
+    host.service = env.start(host, "service.luau")
     local robot = env.start(host, "robot.luau")
     host.event({ event = "hello", format = 1 })
     host.event(fx.state())
@@ -904,6 +904,45 @@ t.group("robot", function()
     host.event(fx.state(false))
     t.eq(host.files[AREA], nil)
     t.eq(bubble(host), nil)
+  end)
+
+  -- The bug: turning the overlay off restarts the service, which hides the layer, and
+  -- Noctalia ends the robot's runtime without a last frame, so the area stayed published
+  -- with no robot on screen, hiding the app's changes from settle waits.
+  t.test("the service removes the area before a restart hides the layer", function()
+    local host, robot = thinking()
+    host.nowMs += stage.CAPTION_MS
+    robot.call("update")
+    t.ok(host.files[AREA] ~= nil)
+    host.config.overlay = false
+    env.start(host, "service.luau")
+    t.ok(host.destroyed["robot.luau"], "the robot's runtime ended")
+    t.eq(host.files[AREA], nil)
+  end)
+
+  t.test("the service removes the area before it hides the layer of a robot that is gone", function()
+    local host, robot = thinking()
+    host.nowMs += stage.CAPTION_MS
+    robot.call("update")
+    -- Noctalia ends the robot's runtime, as when its output goes away.
+    host.globals.noctalia.layer.hide("robot")
+    host.event(fx.state(false))
+    t.ok(host.files[AREA] ~= nil, "nothing removed it yet")
+    host.nowMs += 3000
+    host.service.call("update")
+    t.eq(host.files[AREA], nil)
+  end)
+
+  -- The bug: an instance that stopped thinking removed the area another instance had
+  -- published since.
+  t.test("the robot removes only the area it wrote itself", function()
+    local host, robot = thinking()
+    host.nowMs += stage.CAPTION_MS
+    robot.call("update")
+    local theirs = host.globals.noctalia.json.encode({ output = "DP-2", rect = {}, incarnation = "DP-2 1", ts = 1 })
+    host.files[AREA] = theirs
+    host.event(fx.with(F.click_aim, { call = 2, phase = "start", aim = nil }))
+    t.eq(host.files[AREA], theirs)
   end)
 
   t.test("draws nothing once the agent has gone", function()

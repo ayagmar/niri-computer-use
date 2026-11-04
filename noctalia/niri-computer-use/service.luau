@@ -50,6 +50,16 @@ local function publishLive()
   noctalia.state.set(LIVE, live.view(overlay))
 end
 
+-- Removes the file where the robot publishes the area it changes, named by `path`, the
+-- `live` state's `overlay`. Hiding the layer ends the robot's runtime without a last
+-- frame, so it can't remove the file itself, and the server would leave the area out of
+-- its comparisons for five more seconds.
+local function clearArea(path: any)
+  if type(path) == "string" then
+    noctalia.removeFile(path)
+  end
+end
+
 -- Shows the layer while an agent holds or asks for the desktop and the overlay is on,
 -- and hides it HIDE_MS after, so no surface or runtime exists while no agent drives.
 local function showOverlay(nowMs: number)
@@ -66,6 +76,7 @@ local function showOverlay(nowMs: number)
     if nowMs >= hideAtMs then
       shown = false
       hideAtMs = nil
+      clearArea(overlay.overlay)
       noctalia.layer.hide(LAYER)
     end
   end
@@ -185,7 +196,10 @@ function update()
 end
 
 noctalia.setUpdateInterval(1000)
--- A service that runs again, as after the overlay setting changed, starts hidden.
+-- A service that runs again, as after the overlay setting changed, starts hidden, and
+-- removes the area the last one's robot published, from the state it left.
+local last = noctalia.state.get(LIVE)
+clearArea(if type(last) == "table" then last.overlay else nil)
 noctalia.layer.hide(LAYER)
 publishLive()
 start()

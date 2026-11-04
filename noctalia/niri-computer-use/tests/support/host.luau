@@ -71,6 +71,9 @@ function M.new(sources)
     fileOps = {},
     -- When each file was last written, in seconds, as fileInfo() gives it.
     mtimes = {},
+    -- The entry whose top level runs now, and the entries whose runtime Noctalia ended.
+    loading = nil,
+    destroyed = {},
   }
 
   local function tr(key: string, vars)
@@ -194,8 +197,20 @@ function M.new(sources)
       show = function(id)
         table.insert(host.layerCalls, { command = "show", id = id })
       end,
+      -- Noctalia ends a hidden layer's runtime: it hears of nothing after.
       hide = function(id)
         table.insert(host.layerCalls, { command = "hide", id = id })
+        local entry = `{id}.luau`
+        host.destroyed[entry] = true
+        for key, watchers in host.watchers do
+          local kept = {}
+          for _, watcher in watchers do
+            if watcher.owner ~= entry then
+              table.insert(kept, watcher)
+            end
+          end
+          host.watchers[key] = kept
+        end
       end,
       configure = function(id, patch)
         table.insert(host.layerCalls, { command = "configure", id = id, patch = copy(patch) })
@@ -235,7 +250,7 @@ function M.new(sources)
         host.state[key] = copy(value)
         host.watching = true
         for _, watcher in host.watchers[key] or {} do
-          watcher(copy(value))
+          watcher.fn(copy(value))
         end
         host.watching = false
       end,
@@ -244,7 +259,7 @@ function M.new(sources)
       end,
       watch = function(key, fn)
         host.watchers[key] = host.watchers[key] or {}
-        table.insert(host.watchers[key], fn)
+        table.insert(host.watchers[key], { fn = fn, owner = host.loading })
       end,
     },
   }
