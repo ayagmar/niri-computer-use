@@ -68,6 +68,11 @@ export type Live = {
   heardMs: number,
   -- Counts the changes, so the service publishes only when something changed.
   rev: number,
+  -- Where the robot publishes the area it changes while thinking, from `hello`: a
+  -- `watch` that names none belongs to a server that wouldn't leave it out.
+  overlay: string?,
+  -- Some agent's server runs a build an update replaced, which may not leave it out.
+  replaced: boolean,
 }
 
 function M.new(): Live
@@ -81,6 +86,8 @@ function M.new(): Live
     releasedMs = nil,
     heardMs = 0,
     rev = 0,
+    overlay = nil,
+    replaced = false,
   }
 end
 
@@ -145,12 +152,23 @@ local function sameHolder(a: Holder?, b: Holder?): boolean
   return a.session == b.session and a.sinceMs == b.sinceMs and a.pending == b.pending
 end
 
+local function anyReplaced(clients: any): boolean
+  for _, client in if type(clients) == "table" then clients else {} do
+    if type(client) == "table" and client.replaced == true then
+      return true
+    end
+  end
+  return false
+end
+
 local function state(model: Live, event: any, nowMs: number): boolean
   local before, after = model.holder, holder(event.lease)
   local stopped = event.stopped == true
-  if sameHolder(before, after) and stopped == model.stopped then
+  local replaced = anyReplaced(event.clients)
+  if sameHolder(before, after) and stopped == model.stopped and replaced == model.replaced then
     return false
   end
+  model.replaced = replaced
   local newLease = after ~= nil and (before == nil or before.session ~= after.session or before.sinceMs ~= after.sinceMs)
   if before and not after then
     model.releasedMs = nowMs
@@ -268,9 +286,11 @@ function M.feed(model: Live, event: any, nowMs: number): boolean
   local changed = false
   if kind == "hello" then
     -- A new watch: its first `live` line, if any, says again what is in progress.
-    changed = model.call ~= nil or model.legacy ~= nil
+    local overlay = if type(event.overlay) == "string" and event.overlay ~= "" then event.overlay else nil
+    changed = model.call ~= nil or model.legacy ~= nil or overlay ~= model.overlay
     model.call = nil
     model.legacy = nil
+    model.overlay = overlay
   elseif kind == "state" then
     changed = state(model, event, nowMs)
   elseif kind == "live" then
@@ -298,6 +318,8 @@ function M.view(model: Live)
     legacy = model.legacy,
     releasedMs = model.releasedMs,
     heardMs = model.heardMs,
+    overlay = model.overlay,
+    replaced = model.replaced,
   }
 end
 

@@ -13,6 +13,7 @@ local specs = {
   stage_spec = require("./stage_spec"),
   service_spec = require("./service_spec"),
   surfaces_spec = require("./surfaces_spec"),
+  compat_spec = require("./compat_spec"),
 }
 for name, loaded in specs do
   if loaded ~= nil then

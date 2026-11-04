@@ -75,6 +75,8 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          # The tests read the last release's plugin from its tag.
+          fetch-depth: 0
 
       - name: Run the Noctalia plugin's tests
         run: make test-plugin

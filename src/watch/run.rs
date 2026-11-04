@@ -74,10 +74,12 @@ pub(crate) async fn follow(
     poll: Duration,
 ) -> Result<std::convert::Infallible, Ended> {
     let mut out = Out { out };
+    let overlay = watched.runtime.path().join(crate::overlay_area::FILE);
     out.send(&Event::Hello {
         format: FORMAT,
         version: env!("CARGO_PKG_VERSION"),
         instance: &watched.instance,
+        overlay: overlay.to_str(),
     })
     .await?;
     let (mut tail, recent) = watched.audit.as_ref().map_or_else(
@@ -369,6 +371,7 @@ mod tests {
             &dir,
             r#"{"session":"pi/9","instance":"niri.sock","tool":"status"}"#,
         );
+        let overlay = watched.runtime.path().join("overlay.json");
         let (writer, reader) = tokio::io::duplex(64 * 1024);
         let watch = tokio::spawn(async move {
             let Err(_) = follow(&watched, writer, Duration::from_millis(10)).await;
@@ -379,6 +382,7 @@ mod tests {
             (hello["event"].as_str(), hello["format"].as_u64()),
             (Some("hello"), Some(1))
         );
+        assert_eq!(hello["overlay"].as_str(), overlay.to_str());
         let idle = event(&mut lines).await;
         assert_eq!(idle["event"], "state");
         assert!(

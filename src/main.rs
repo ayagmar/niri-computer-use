@@ -22,6 +22,7 @@ mod niri;
 mod noctalia;
 mod notice;
 mod observe;
+mod overlay_area;
 mod policy;
 mod ppm;
 mod refs;

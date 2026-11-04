@@ -63,7 +63,9 @@ Every action, and `wait_for`, takes `screenshot: true`. The result then comes wi
 
 A small part of the screen that never stops, such as the bar's clock, a CPU graph, a terminal spinner or a caret, stays under 0.5 % and doesn't hold the wait up. A video does if it is larger than that, about 135x135 pixels of a 2560x1440 output: the wait then ends at 1.5 seconds with `settled: false` and `changing` above 0.005. A settled screenshot means the screen changed little over the last captures, not that the app is ready.
 
-Where grim can't write PPM, the server compares the captured JPEGs instead, and only two identical ones count as settled.
+The comparisons leave out the rectangle the [Noctalia plugin's overlay](../../start/noctalia-plugin/#overlay) publishes as `overlay.json` in the server's runtime directory, where it may change pixels between actions. They do so only when both captures show the same output, the same way, and read the same rectangle right after them, and the part changed is then taken of the pixels compared. The file counts while it was written in the last five seconds, and not more than a second ahead of the server's clock. Its rectangle must be at most 877x227 logical pixels, and must leave some pixels to compare. A change only inside that rectangle doesn't keep the wait going.
+
+Where grim can't write PPM, the server compares the captured JPEGs instead, and only two identical ones count as settled. Nothing is left out of them.
 
 This is faster and more reliable than a `screenshot` call sent after the action, and the screenshot is taken before the next action can start.
 

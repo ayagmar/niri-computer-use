@@ -53,6 +53,29 @@ function M.new(sources)
     layerCalls = {},
     -- The layer instance a layer entry runs as.
     layer = { output = "DP-1", tree = nil, renders = 0 },
+    -- The theme's palette, as getColor() reads it.
+    colors = {
+      primary = "#7AA2F7",
+      error = "#F7768E",
+      on_surface = "#C0CAF5",
+      surface_container_highest = "#292E42",
+    },
+    -- A filesystem for the plugin's data directory: files by absolute path, the
+    -- directories that exist, and how many writes it took. Noctalia creates the data
+    -- directory itself; writeFile creates no parent.
+    files = {},
+    dirs = { ["/data/plugin"] = true },
+    writes = 0,
+    failWrites = false,
+    -- Each rename and removal, with how many renders the layer had drawn by then.
+    fileOps = {},
+    -- When each file was last written, in seconds, as fileInfo() gives it.
+    mtimes = {},
+    -- The entry whose top level runs now, each entry's runtime, and the entries whose
+    -- runtime Noctalia ended.
+    loading = nil,
+    runtimes = {},
+    destroyed = {},
   }
 
   local function tr(key: string, vars)
@@ -91,6 +114,84 @@ function M.new(sources)
     getSetting = function(path)
       return host.settings[path]
     end,
+    getColor = function(role)
+      return host.colors[role]
+    end,
+    pluginDataDir = function()
+      return "/data/plugin"
+    end,
+    mkdirAll = function(path)
+      local at = ""
+      for part in path:gmatch("[^/]+") do
+        at ..= "/" .. part
+        host.dirs[at] = true
+      end
+      return true
+    end,
+    fileExists = function(path)
+      return host.files[path] ~= nil or host.dirs[path] == true
+    end,
+    -- A relative path is in the plugin's directory, as in Noctalia.
+    readFile = function(path)
+      if path:sub(1, 1) ~= "/" then
+        return sources[path]
+      end
+      return host.files[path]
+    end,
+    writeFile = function(path, data)
+      if host.failWrites or not host.dirs[path:match("^(.*)/[^/]*$")] then
+        return false, "cannot open file for writing"
+      end
+      host.files[path] = data
+      host.mtimes[path] = host.nowMs / 1000
+      host.writes += 1
+      return true
+    end,
+    renameFile = function(from, to)
+      if host.files[from] == nil then
+        return false, "no such file"
+      end
+      host.files[to], host.files[from] = host.files[from], nil
+      host.mtimes[to], host.mtimes[from] = host.mtimes[from], nil
+      table.insert(host.fileOps, { op = "rename", path = to, renders = host.layer.renders })
+      return true
+    end,
+    removeFile = function(path)
+      if host.files[path] == nil then
+        return false, "no such file"
+      end
+      host.files[path] = nil
+      table.insert(host.fileOps, { op = "remove", path = path, renders = host.layer.renders })
+      return true
+    end,
+    listDir = function(path)
+      if not host.dirs[path] then
+        return nil, "not a directory"
+      end
+      local out = {}
+      for file in host.files do
+        local dir, name = file:match("^(.*)/([^/]*)$")
+        if dir == path then
+          table.insert(out, name)
+        end
+      end
+      for sub in host.dirs do
+        local dir, name = sub:match("^(.*)/([^/]*)$")
+        if dir == path then
+          table.insert(out, name)
+        end
+      end
+      table.sort(out)
+      return out
+    end,
+    fileInfo = function(path)
+      if host.dirs[path] then
+        return { size = 0, mtime = 0, isDir = true }
+      elseif host.files[path] == nil then
+        return nil, "no such path"
+      end
+      return { size = #host.files[path], mtime = host.mtimes[path] or 0, isDir = false }
+    end,
     focusedOutputName = function()
       return host.focusedOutput
     end,
@@ -98,8 +199,10 @@ function M.new(sources)
       show = function(id)
         table.insert(host.layerCalls, { command = "show", id = id })
       end,
+      -- Noctalia ends a hidden layer's runtime: it hears of nothing after.
       hide = function(id)
         table.insert(host.layerCalls, { command = "hide", id = id })
+        host.exit(`{id}.luau`, "reload")
       end,
       configure = function(id, patch)
         table.insert(host.layerCalls, { command = "configure", id = id, patch = copy(patch) })
@@ -139,7 +242,7 @@ function M.new(sources)
         host.state[key] = copy(value)
         host.watching = true
         for _, watcher in host.watchers[key] or {} do
-          watcher(copy(value))
+          watcher.fn(copy(value))
         end
         host.watching = false
       end,
@@ -148,7 +251,7 @@ function M.new(sources)
       end,
       watch = function(key, fn)
         host.watchers[key] = host.watchers[key] or {}
-        table.insert(host.watchers[key], fn)
+        table.insert(host.watchers[key], { fn = fn, owner = host.loading })
       end,
     },
   }
@@ -210,6 +313,32 @@ function M.new(sources)
     desktopWidget = desktopWidget,
     layer = layer,
   }
+
+  -- Ends an entry's runtime without a word to it, as a crash would: it hears of nothing
+  -- after.
+  function host.destroy(entry: string)
+    host.destroyed[entry] = true
+    for key, watchers in host.watchers do
+      local kept = {}
+      for _, watcher in watchers do
+        if watcher.owner ~= entry then
+          table.insert(kept, watcher)
+        end
+      end
+      host.watchers[key] = kept
+    end
+  end
+
+  -- Ends an entry's runtime as Noctalia 5.4 does on a hide, a reload, a disable, an
+  -- uninstall, a shutdown or its output going away: it calls the entry's onExit first.
+  function host.exit(entry: string, reason: string)
+    local runtime = host.runtimes[entry]
+    local onExit = if runtime and not host.destroyed[entry] then rawget(runtime.env, "onExit") else nil
+    if onExit then
+      onExit(0, reason)
+    end
+    host.destroy(entry)
+  end
 
   -- Sends a line to the newest stream, as the watch would print it.
   function host.line(text: string)

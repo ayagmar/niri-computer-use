@@ -29,12 +29,12 @@ const NAMESPACE: &str = "noctalia-plugin:ayagmar/niri-computer-use:robot";
 /// The oldest Noctalia with `[[layer]]` entries, plugin API 36.
 const NOCTALIA: (u32, u32) = (5, 4);
 const NOCTALIA_DEADLINE: Duration = Duration::from_secs(190);
-/// The antenna tip's fill in `robot/*.svg`, and its centre in the 32x32 frame.
+/// The antenna tip's fill in `robot/*.svg`, and its centre in the 56x56 frame.
 const ANTENNA: [u8; 3] = [0x4c, 0x8d, 0xff];
-const TIP: (f64, f64) = (16.0, 3.2);
+const TIP: (f64, f64) = (28.0, 5.0);
 /// `lib/stage.luau`'s sizes, in logical pixels at a UI scale of 1.
-const SPRITE: f64 = 32.0;
-const GAP: f64 = 12.0;
+const SPRITE: f64 = 56.0;
+const GAP: f64 = 16.0;
 /// How far the antenna may be from where it should be, in logical pixels: its circle
 /// rasterized at fractional scales, and the robot's position rounded to whole pixels.
 const PLACED: f64 = 2.5;
@@ -251,9 +251,11 @@ fn clicks_pass_through(session: &mut Session<'_>, client: &mut Client) -> Result
     let layout = super::multi::move_to(session, "org.ncu.Activation", "headless-1")?;
     let (x, y) = surface_origin(&output, &layout)?;
     let (width, height) = layout.window_size;
-    // Low and right on the button, so the robot lands above-left of it, still on the button.
+    // Low and right on the 320-wide button, so the robot lands above-left of it, still on
+    // the button: above-left needs room for the widest caption, 207 pixels, the robot and
+    // the gap to its left, 287 pixels in all at a UI scale of 1.
     let first = (
-        f64::from(width).mul_add(0.75, x),
+        f64::from(width).mul_add(0.92, x),
         f64::from(height).mul_add(0.75, y),
     );
     let before = Shot::through(session, client, "output:headless-1", 4000)?;

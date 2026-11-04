@@ -73,6 +73,18 @@ label_key = "settings.overlay.label"
 description_key = "settings.overlay.description"
 default = true
 
+[[setting]]
+key = "overlay_size"
+type = "select"
+label_key = "settings.overlay_size.label"
+description_key = "settings.overlay_size.description"
+default = "medium"
+options = [
+  { value = "small", label_key = "settings.overlay_size.options.small" },
+  { value = "medium", label_key = "settings.overlay_size.options.medium" },
+  { value = "large", label_key = "settings.overlay_size.options.large" },
+]
+
 [[service]]
 id = "watcher"
 entry = "service.luau"

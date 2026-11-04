@@ -455,6 +455,7 @@ end)
 t.group("robot", function()
   local F = fx.live()
   local stage = env.module("lib/stage.luau")
+  local D = stage.dims(stage.MEDIUM, 1)
 
   -- The service and the robot's layer on HDMI-A-1, with the fixtures' agent driving.
   local function overlay()
@@ -466,7 +467,7 @@ t.group("robot", function()
     host.focusedOutput = "HDMI-A-1"
     host.layer.output = "HDMI-A-1"
     host.nowMs = env.module("lib/time.luau").parse("2026-10-30T12:00:00.500Z")
-    env.start(host, "service.luau")
+    host.service = env.start(host, "service.luau")
     local robot = env.start(host, "robot.luau")
     host.event({ event = "hello", format = 1 })
     host.event(fx.state())
@@ -496,19 +497,57 @@ t.group("robot", function()
     return nil
   end
 
-  -- Where the drawn tree puts the robot and its caption, from its two spacers.
-  local function corner(tree)
-    local at = {}
-    local function walk(n)
-      if n.props and (n.props.key == "left" or n.props.key == "top") then
-        at[n.props.key] = n.props
-      end
-      for _, child in n.children or {} do
-        walk(child)
+  -- A node's size in the tree's units: as given, or its children's, laid out along a
+  -- row or a column with its gap. Hidden nodes take no room.
+  local function sized(n)
+    local main, cross = 0, 0
+    local horizontal = n.type == "row"
+    local shown = 0
+    for _, child in n.children or {} do
+      if child.props.visible ~= false then
+        local w, h = sized(child)
+        main += if horizontal then w else h
+        cross = math.max(cross, if horizontal then h else w)
+        shown += 1
       end
     end
-    walk(tree)
-    return at.left.width, at.top.height
+    main += (n.props.gap or 0) * math.max(0, shown - 1)
+    local w = n.props.width or (if horizontal then main else cross)
+    local h = n.props.height or (if horizontal then cross else main)
+    return w, h
+  end
+
+  -- Where the node keyed `key` is in the tree, top-left, in the tree's units, with every
+  -- container aligned at its start, as the overlay's are.
+  local function placed(tree, key)
+    local function walk(n, x, y)
+      if n.props.key == key then
+        return x, y
+      end
+      local horizontal = n.type == "row"
+      for _, child in n.children or {} do
+        if child.props.visible ~= false then
+          local fx, fy = walk(child, x, y)
+          if fx then
+            return fx, fy
+          end
+          local w, h = sized(child)
+          if horizontal then
+            x += w + (n.props.gap or 0)
+          else
+            y += h + (n.props.gap or 0)
+          end
+        end
+      end
+      return nil
+    end
+    return walk(tree, 0, 0)
+  end
+
+  -- Where the drawn tree puts the robot and its caption, below the robot's room to hop.
+  local function corner(tree)
+    local x, y = placed(tree, "group")
+    return x, y + D.lift
   end
 
   t.test("draws one frame of the robot beside the click, placed in the layer", function()
@@ -528,7 +567,7 @@ t.group("robot", function()
     t.eq(#frames, #stage.POSES)
     local shown = {}
     for _, image in frames do
-      t.ok(env.sources[image.props.path] ~= nil, `{image.props.path} is in the plugin`)
+      t.ok(host.files[image.props.path] ~= nil, `{image.props.path} is written`)
       if image.props.visible then
         table.insert(shown, image.props.path)
       end
@@ -537,8 +576,8 @@ t.group("robot", function()
     t.contains(host.texts(host.layer.tree), "click")
     local left, top = corner(host.layer.tree)
     -- Above-left of the point, with the caption to the robot's left.
-    t.eq(left + (stage.INNER + stage.captionWidth("click")) + stage.SPRITE, 650 - stage.GAP)
-    t.eq(top, math.floor(320.4 - stage.GAP - stage.SPRITE + 0.5))
+    t.eq(left + (D.inner + stage.captionWidth("click", D)) + D.size, 650 - stage.GAP)
+    t.eq(top, math.floor(320.4 - stage.GAP - D.size + 0.5))
   end)
 
   t.test("a target on another output moves the layer there instead of drawing here", function()
@@ -582,6 +621,9 @@ t.group("robot", function()
     local host, robot = overlay()
     -- It popped in at home with the lease, and glides from there to the click.
     host.event(F.click_aim)
+    t.eq(host.updateInterval, stage.READY_MS, "nothing to draw while it gets ready")
+    host.nowMs += stage.READY_MS
+    robot.call("update")
     t.eq(host.updateInterval, stage.FRAME_MS)
     local steps = {}
     for _ = 1, 4 do
@@ -593,7 +635,7 @@ t.group("robot", function()
     robot.call("update")
     t.ok(host.updateInterval > stage.FRAME_MS, "slower once there")
     -- The caption shows on arrival, left of the robot.
-    local there = corner(host.layer.tree) + stage.INNER + stage.captionWidth("click")
+    local there = corner(host.layer.tree) + D.inner + stage.captionWidth("click", D)
     for i = 2, #steps do
       t.ok(math.abs(there - steps[i]) < math.abs(there - steps[i - 1]), "a step toward the click each frame")
     end
@@ -612,8 +654,8 @@ t.group("robot", function()
     host.event({ event = "hello", format = 1 })
     host.event(fx.state(nil, { pending = true }))
     local left, top = corner(host.layer.tree)
-    t.eq(left + stage.INNER + stage.captionWidth("asking to drive") + stage.SPRITE, 1280 - stage.HOME)
-    t.eq(top + stage.SPRITE, 800 - stage.HOME)
+    t.eq(left + D.inner + stage.captionWidth("asking to drive", D) + D.size, 1280 - stage.HOME)
+    t.eq(top + D.size, 800 - stage.HOME)
   end)
 
   t.test("places the robot in UI-scaled units, as Noctalia scales the tree", function()
@@ -623,8 +665,341 @@ t.group("robot", function()
     host.nowMs += 500
     robot.call("update")
     local left, top = corner(host.layer.tree)
-    t.near(left * 1.25 + (stage.INNER + stage.captionWidth("click") + stage.SPRITE) * 1.25, 650 - stage.GAP, 0.5)
-    t.near(top * 1.25 + stage.SPRITE * 1.25, 320.4 - stage.GAP, 0.5)
+    t.near(left * 1.25 + (D.inner + stage.captionWidth("click", D) + D.size) * 1.25, 650 - stage.GAP, 0.5)
+    t.near(top * 1.25 + D.size * 1.25, 320.4 - stage.GAP, 0.5)
+  end)
+
+  -- The bug: the size setting read under another name, or a value it doesn't list taken
+  -- as a size, so the robot never grew or drew at size zero.
+  t.test("draws the robot and its caption at the size the setting names", function()
+    for named, size in { small = 40, medium = 56, large = 72, huge = 56 } do
+      local host, robot = overlay()
+      host.config.overlay_size = named
+      host.event(F.click_aim)
+      host.nowMs += 500
+      robot.call("update")
+      local image = images(host.layer.tree)[1]
+      t.eq(image.props.width, size, `{named}: sprite`)
+      local label = host.find(host.layer.tree, function(n)
+        return n.type == "label"
+      end)
+      t.near(label.props.fontSize, 13 * size / 56, 0.001, `{named}: caption font`)
+      local left = corner(host.layer.tree)
+      local d = stage.dims(size, 1)
+      t.eq(left + d.inner + stage.captionWidth("click", d) + size, 650 - stage.GAP, `{named}: placed by its size`)
+    end
+  end)
+
+  -- The bug: a frame redrawn with its antenna elsewhere, where the nested overlay case,
+  -- which finds the robot by that dot, doesn't look.
+  t.test("every frame has the antenna's solid #4c8dff tip at the same place", function()
+    for _, pose in stage.POSES do
+      local svg = env.sources[`robot/{pose}.svg`]
+      t.ok(svg ~= nil, `{pose} is in the plugin`)
+      t.ok(svg:find('<circle cx="28" cy="5" r="3.4" fill="#4c8dff" stroke="none"/>', 1, true) ~= nil, `{pose}: the tip`)
+      t.ok(svg:find('viewBox="0 0 56 56"', 1, true) ~= nil, `{pose}: drawn at 56`)
+    end
+  end)
+
+  -- The bug: frames written into a directory that doesn't exist yet, as on a fresh
+  -- install, so every write failed and the robot never took the theme's colours.
+  t.test("draws the frames in the theme's colours, written once per palette", function()
+    local host = overlay()
+    local paths = {}
+    for _, image in images(host.layer.tree) do
+      paths[image.props.path] = true
+      t.ok(image.props.path:find("^/data/plugin/robot/") ~= nil, image.props.path)
+      local svg = host.files[image.props.path]
+      t.ok(svg:find("#292e42", 1, true) and svg:find("#c0caf5", 1, true), `{image.props.path}: the theme's colours`)
+      t.eq(svg:find("#e8e8ec", 1, true), nil, `{image.props.path}: no template body`)
+    end
+    local writes = host.writes
+    env.start(host, "robot.luau")
+    t.eq(host.writes, writes, "a second instance writes nothing")
+    for _, image in images(host.layer.tree) do
+      t.ok(paths[image.props.path], "and draws the same files")
+    end
+  end)
+
+  local function drawn(host)
+    local out = {}
+    for _, image in images(host.layer.tree) do
+      table.insert(out, image.props.path)
+    end
+    return out
+  end
+
+  -- The bug: one Noctalia session starting with another palette removed the frames
+  -- another session had just put in its tree, before it loaded them, so its robot drew
+  -- nothing; and a half-written file another instance was about to rename.
+  t.test("another palette writes its own set and keeps the last one's, which another session may draw", function()
+    local host = overlay()
+    local first = drawn(host)
+    local dir = first[1]:match("^(.*)/[^/]*$")
+    host.files[dir .. "/idle.svg.17.tmp"] = "half"
+    host.mtimes[dir .. "/idle.svg.17.tmp"] = host.nowMs / 1000
+    host.colors.primary = "#9ECE6A"
+    env.start(host, "robot.luau")
+    local second = drawn(host)
+    t.ok(second[1]:match("^(.*)/[^/]*$") ~= dir, "a set of its own")
+    for _, path in first do
+      t.ok(host.files[path] ~= nil, `{path} is kept for the other session`)
+    end
+    t.ok(host.files[dir .. "/idle.svg.17.tmp"] ~= nil, "and another writer's fresh file")
+  end)
+
+  -- The bug: a set removed as unused while a long-lived robot drew it, or while another
+  -- session started to reuse it.
+  t.test("another palette's set is never removed; in its own, a temporary file an hour old is", function()
+    local host = overlay()
+    local first = drawn(host)
+    host.nowMs += 30 * 86400 * 1000
+    host.colors.primary = "#9ECE6A"
+    env.start(host, "robot.luau")
+    local dir = drawn(host)[1]:match("^(.*)/[^/]*$")
+    for _, path in first do
+      t.ok(host.files[path] ~= nil, `{path} is kept`)
+    end
+    host.files[dir .. "/idle.svg.1.tmp"], host.mtimes[dir .. "/idle.svg.1.tmp"] = "old", host.nowMs / 1000 - 7200
+    host.files[dir .. "/idle.svg.2.tmp"], host.mtimes[dir .. "/idle.svg.2.tmp"] = "new", host.nowMs / 1000 - 60
+    env.start(host, "robot.luau")
+    t.eq(host.files[dir .. "/idle.svg.1.tmp"], nil, "an hour-old temporary file is gone")
+    t.ok(host.files[dir .. "/idle.svg.2.tmp"] ~= nil, "a fresh one stays")
+    for _, path in drawn(host) do
+      t.ok(host.files[path] ~= nil, `{path} is drawn and kept`)
+    end
+  end)
+
+  t.test("draws the frames as they are when the theme can't be written", function()
+    for _, broken in { "write", "colour" } do
+      local host = env.host()
+      if broken == "write" then
+        host.failWrites = true
+      else
+        host.colors.primary = nil
+      end
+      host.outputs = { { name = "DP-1", width = 1280, height = 720, scale = 1, focused = true } }
+      env.start(host, "service.luau")
+      env.start(host, "robot.luau")
+      host.event({ event = "hello", format = 1 })
+      host.event(fx.state())
+      for _, image in images(host.layer.tree) do
+        t.ok(env.sources[image.props.path] ~= nil, `{broken}: {image.props.path} is in the plugin`)
+      end
+      t.eq(next(host.files), nil, `{broken}: nothing left behind`)
+    end
+  end)
+
+  -- The bug: the ring and the robot laid out in one row with the ring's offset taken
+  -- from the robot's, so the ring sat beside the robot instead of on the click.
+  t.test("draws a click's ring on the click and the robot beside it, at any UI scale", function()
+    for _, scale in { 1, 1.5 } do
+      local host, robot = overlay()
+      host.settings["accessibility.ui_scale"] = scale
+      host.event(F.click_aim)
+      host.nowMs += stage.READY_MS + stage.GLIDE_MS + 10
+      robot.call("update")
+      local ring = host.find(host.layer.tree, function(n)
+        return n.props.key == "ring"
+      end)
+      t.ok(ring ~= nil, `{scale}: a ring`)
+      t.eq(ring.props.border, "primary")
+      local x, y = placed(host.layer.tree, "ring")
+      t.near((x + ring.props.width / 2) * scale, 650, 1, `{scale}: on the click across`)
+      t.near((y + ring.props.height / 2) * scale, 320.4, 1, `{scale}: on the click down`)
+      local left, top = corner(host.layer.tree)
+      local d = stage.dims(stage.MEDIUM, scale)
+      t.near(left * scale + (d.inner + stage.captionWidth("click", d) + d.size) * scale, 650 - stage.GAP, 1, `{scale}: robot across`)
+      t.near((top - D.lift + d.lift) * scale + d.robot, 320.4 - stage.GAP, 1, `{scale}: robot down`)
+    end
+  end)
+
+  -- The service and the layer as `overlay` gives them, with a `watch` that names the area
+  -- file, and the agent's click at (650, 320.4) ended: the robot thinks from CAPTION_MS on.
+  local AREA_DIR = "/run/user/1000/niri-computer-use/niri.sock"
+  local AREA = AREA_DIR .. "/overlay.json"
+  local function thinking()
+    local host, robot = overlay()
+    host.dirs[AREA_DIR] = true
+    host.event({ event = "hello", format = 1, overlay = AREA })
+    host.event(fx.with(F.click_aim, { phase = "end", outcome = { accepted = true } }))
+    return host, robot
+  end
+
+  local function bubble(host)
+    return host.find(host.layer.tree, function(n)
+      return n.props.key == "bubble"
+    end)
+  end
+
+  local function ops(host, op)
+    local out = {}
+    for _, entry in host.fileOps do
+      if entry.op == op and entry.path == AREA then
+        table.insert(out, entry)
+      end
+    end
+    return out
+  end
+
+  -- The bug: a frame drawn before the server can read its area, or a robot that moves
+  -- while its old area is still published, changes pixels a settle leaves out; and a hop,
+  -- a ring or a caption going away outside the area keeps a settle from ending.
+  t.test("publishes one area where the robot stands, before the frame, and removes it before the robot moves", function()
+    local host, robot = overlay()
+    host.dirs[AREA_DIR] = true
+    host.event({ event = "hello", format = 1, overlay = AREA })
+    local renders = host.layer.renders
+    -- An end alone, as a coalesced read gives it: the robot snaps from home to the click.
+    host.event(fx.with(F.click_aim, { phase = "end", outcome = { accepted = true } }))
+    local written = ops(host, "rename")
+    t.eq(written[#written].renders, renders, "published before the frame was drawn")
+    t.ok(host.layer.renders > renders, "and the frame drawn")
+    local before = #written
+    local area = host.globals.noctalia.json.decode(host.files[AREA])
+    t.eq(area.output, "HDMI-A-1")
+    t.ok(math.abs(area.ts - host.nowMs) < 1, "stamped now")
+    for path in host.files do
+      t.ok(not path:match("%.tmp$"), `{path} left behind`)
+    end
+    -- Through the hop, the ring, the caption going and thinking, every node drawn is
+    -- inside the same area, and the file is written again every 2 s, not more often.
+    local function inside()
+      for _, key in { "group", "ring" } do
+        local node = host.find(host.layer.tree, function(n)
+          return n.props.key == key
+        end)
+        if node then
+          local x, y = placed(host.layer.tree, key)
+          local w, h = sized(node)
+          local a = area.rect
+          t.ok(x >= a.x and y >= a.y and x + w <= a.x + a.width and y + h <= a.y + a.height, `{key} outside the area`)
+        end
+      end
+    end
+    local thought = false
+    for _ = 1, 40 do
+      host.nowMs += 100
+      robot.call("update")
+      inside()
+      thought = thought or bubble(host) ~= nil
+      local now = host.globals.noctalia.json.decode(host.files[AREA])
+      t.eq(host.globals.noctalia.json.encode(now.rect), host.globals.noctalia.json.encode(area.rect), "the same area")
+    end
+    t.ok(thought, "thinks once the caption is gone")
+    t.eq(#ops(host, "rename"), before + 2, "written again every 2 s")
+    -- The next call starts where the robot stands, then aims elsewhere: removed before the
+    -- frame that gets ready to glide.
+    local start = fx.with(F.click_aim, { call = 2, phase = "start" })
+    start.aim = nil
+    host.event(start)
+    t.ok(host.files[AREA] ~= nil, "standing as the call starts")
+    renders = host.layer.renders
+    local aim = fx.with(F.click_aim, { call = 2 })
+    aim.aim = { output = "HDMI-A-1", area = { width = 2048, height = 1152 }, points = { { x = 1500, y = 800 } } }
+    host.event(aim)
+    local removed = ops(host, "remove")
+    t.eq(host.files[AREA], nil)
+    t.eq(removed[#removed].renders, renders, "removed before that frame was drawn")
+    t.ok(host.layer.renders > renders, "and the frame drawn")
+  end)
+
+  t.test("doesn't think while the area can't be written, and does once it can", function()
+    local host, robot = thinking()
+    host.failWrites = true
+    host.nowMs += stage.CAPTION_MS
+    robot.call("update")
+    t.eq(host.files[AREA], nil)
+    t.eq(bubble(host), nil, "no frame thinks unpublished")
+    host.failWrites = false
+    for _ = 1, 3 do
+      host.nowMs += 1000
+      robot.call("update")
+    end
+    t.ok(host.files[AREA] ~= nil, "written once it can be")
+    t.ok(bubble(host) ~= nil, "thinks again")
+  end)
+
+  t.test("removes the area once the robot has waved goodbye", function()
+    local host, robot = thinking()
+    host.nowMs += stage.CAPTION_MS
+    robot.call("update")
+    t.ok(host.files[AREA] ~= nil)
+    host.event(fx.state(false))
+    t.eq(bubble(host), nil)
+    host.nowMs += stage.GOODBYE_MS
+    robot.call("update")
+    t.eq(host.files[AREA], nil)
+  end)
+
+  -- The bug: turning the overlay off restarts the service, which hides the layer, and
+  -- Noctalia ends the robot's runtime without a last frame, so the area stayed published
+  -- with no robot on screen, hiding the app's changes from settle waits.
+  t.test("the service removes the area before a restart hides the layer", function()
+    local host, robot = thinking()
+    host.nowMs += stage.CAPTION_MS
+    robot.call("update")
+    t.ok(host.files[AREA] ~= nil)
+    host.config.overlay = false
+    env.start(host, "service.luau")
+    t.ok(host.destroyed["robot.luau"], "the robot's runtime ended")
+    t.eq(host.files[AREA], nil)
+  end)
+
+  t.test("the service removes the area before it hides the layer of a robot that is gone", function()
+    local host, robot = thinking()
+    host.nowMs += stage.CAPTION_MS
+    robot.call("update")
+    -- The robot's runtime ends with no onExit, as a crash would.
+    host.destroy("robot.luau")
+    host.event(fx.state(false))
+    t.ok(host.files[AREA] ~= nil, "nothing removed it yet")
+    host.nowMs += 3000
+    host.service.call("update")
+    t.eq(host.files[AREA], nil)
+  end)
+
+  -- The bug: disabling the plugin, reloading it, or unplugging the robot's output ended
+  -- its runtime with no frame and no service start after, so the area stayed published
+  -- with no robot on screen.
+  t.test("the robot removes its area when Noctalia ends its runtime", function()
+    for _, ending in { "disable", "reload", "output" } do
+      local host, robot = thinking()
+      host.nowMs += stage.CAPTION_MS
+      robot.call("update")
+      t.ok(host.files[AREA] ~= nil, ending)
+      if ending == "output" then
+        host.exit("robot.luau", "reload")
+      else
+        host.exit("service.luau", ending)
+        host.exit("robot.luau", ending)
+      end
+      t.eq(host.files[AREA], nil, ending)
+      if ending == "reload" then
+        env.start(host, "service.luau")
+        env.start(host, "robot.luau")
+      end
+    end
+    -- An instance ending leaves the area another wrote since.
+    local host, robot = thinking()
+    host.nowMs += stage.CAPTION_MS
+    robot.call("update")
+    local theirs = host.globals.noctalia.json.encode({ output = "DP-2", rect = {}, incarnation = "DP-2 1", ts = 1 })
+    host.files[AREA] = theirs
+    host.exit("robot.luau", "reload")
+    t.eq(host.files[AREA], theirs)
+  end)
+
+  -- The bug: an instance that stopped thinking removed the area another instance had
+  -- published since.
+  t.test("the robot removes only the area it wrote itself", function()
+    local host, robot = thinking()
+    host.nowMs += stage.CAPTION_MS
+    robot.call("update")
+    local theirs = host.globals.noctalia.json.encode({ output = "DP-2", rect = {}, incarnation = "DP-2 1", ts = 1 })
+    host.files[AREA] = theirs
+    host.event(fx.with(F.click_aim, { call = 2, phase = "start", aim = nil }))
+    t.eq(host.files[AREA], theirs)
   end)
 
   t.test("draws nothing once the agent has gone", function()
@@ -635,6 +1010,20 @@ t.group("robot", function()
     robot.call("update")
     t.eq(#images(host.layer.tree), 0)
   end)
+end)
+
+-- The bug: a setting or one of its options without an English string, which Noctalia
+-- shows as its raw key.
+t.test("every setting's label, description and option has an English string", function()
+  local host = env.host()
+  local tr = host.globals.noctalia.tr
+  local manifest = env.sources["plugin.toml"]
+  local keys = 0
+  for key in manifest:gmatch('_key = "([%w_.]+)"') do
+    keys += 1
+    t.ok(tr(key) ~= key, `{key} is translated`)
+  end
+  t.ok(keys > 10, "the manifest's keys were read")
 end)
 
 return nil

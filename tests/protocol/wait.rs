@@ -242,6 +242,62 @@ async fn a_still_screen_is_met_with_its_screenshot() {
     assert_eq!(content[1]["type"], "image", "{result}");
 }
 
+// The bug: the overlay's robot thinking in place beside the last target keeps every
+// screen wait from ending; a file that no longer describes it hides real changes.
+#[tokio::test]
+async fn a_screen_wait_leaves_out_the_area_the_overlay_publishes() {
+    let (fixture, _niri, _stream, mut server) = start("wait-overlay-area").await;
+    // DP-1 is 2560x1440 at scale 1, sampled at 1280 wide: an 80x80 block of image pixels
+    // from (100, 100), more than `QUIET` of them, is logical (200, 200) to (360, 360).
+    let header = b"P6\n1280 720\n255\n";
+    let mut blinking = vec![0_u8; 1280 * 720 * 3];
+    for y in 100..180 {
+        for x in 100..180 {
+            blinking[(y * 1280 + x) * 3] = 255;
+        }
+    }
+    std::fs::write(
+        fixture.path("grim.0.ppm"),
+        [header.as_slice(), &vec![0; 1280 * 720 * 3]].concat(),
+    )
+    .unwrap();
+    std::fs::write(
+        fixture.path("grim.1.ppm"),
+        [header.as_slice(), &blinking].concat(),
+    )
+    .unwrap();
+    fixture.program(
+        "grim",
+        r#"case " $* " in *" -t ppm "*) ;; *) exec cat "$DIR/grim.out" ;; esac
+n=$(($(cat "$DIR/frames" 2>/dev/null || echo 0) + 1)); echo "$n" > "$DIR/frames"
+cat "$DIR/grim.$((n % 2)).ppm""#,
+    );
+    let area = fixture.runtime_dir().join("overlay.json");
+    let publish = |output: &str, age_ms: u128| {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis();
+        let rect = json!({"x": 196, "y": 196, "width": 168, "height": 168});
+        let file =
+            json!({"output": output, "rect": rect, "incarnation": "test", "ts": now - age_ms});
+        std::fs::write(&area, file.to_string()).unwrap();
+    };
+    let wait = json!({"until": "screen_stable", "timeout_ms": 1000});
+    for (published, expected) in [
+        (None, "timeout"),
+        (Some(("DP-1", 0)), "met"),
+        (Some(("HDMI-A-1", 0)), "timeout"),
+        (Some(("DP-1", 6000)), "timeout"),
+    ] {
+        if let Some((output, age_ms)) = published {
+            publish(output, age_ms);
+        }
+        let waited = server.call("wait_for", wait.clone()).await;
+        assert_eq!(report(&waited)["observed"], expected, "{published:?}");
+    }
+}
+
 // The bug: every capture a screen wait took kept a ref, about ten a second, and dropped the
 // one before only after keeping the next, so with the 64 kept refs full each capture pushed
 // one of the agent's out, and a wait without a screenshot kept a ref nobody got.

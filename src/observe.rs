@@ -225,9 +225,7 @@ pub(crate) async fn screenshot(
         .map_err(CallError::InvalidArguments)?;
     display.checked(socket).await?;
     let started = Instant::now();
-    let captured_at = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0, |since| since.as_millis());
+    let captured_at = u128::from(unix_ms(SystemTime::now()));
     let done = runner::run(
         "grim",
         Search::Client(place),
@@ -358,6 +356,13 @@ struct Plan {
     args: Vec<String>,
     size: (u32, u32),
     metadata: Metadata,
+}
+
+/// `at` in Unix milliseconds, 0 before 1970.
+pub(crate) fn unix_ms(at: SystemTime) -> u64 {
+    at.duration_since(UNIX_EPOCH).map_or(0, |since| {
+        u64::try_from(since.as_millis()).unwrap_or(u64::MAX)
+    })
 }
 
 fn plan(
