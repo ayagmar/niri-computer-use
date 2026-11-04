@@ -954,11 +954,42 @@ t.group("robot", function()
     local host, robot = thinking()
     host.nowMs += stage.CAPTION_MS
     robot.call("update")
-    -- Noctalia ends the robot's runtime, as when its output goes away.
-    host.globals.noctalia.layer.hide("robot")
+    -- The robot's runtime ends with no onExit, as a crash would.
+    host.destroy("robot.luau")
     host.event(fx.state(false))
     t.ok(host.files[AREA] ~= nil, "nothing removed it yet")
     host.nowMs += 3000
+  -- The bug: disabling the plugin, reloading it, or unplugging the robot's output ended
+  -- its runtime with no frame and no service start after, so the area stayed published
+  -- with no robot on screen.
+  t.test("the robot removes its area when Noctalia ends its runtime", function()
+    for _, ending in { "disable", "reload", "output" } do
+      local host, robot = thinking()
+      host.nowMs += stage.CAPTION_MS
+      robot.call("update")
+      t.ok(host.files[AREA] ~= nil, ending)
+      if ending == "output" then
+        host.exit("robot.luau", "reload")
+      else
+        host.exit("service.luau", ending)
+        host.exit("robot.luau", ending)
+      end
+      t.eq(host.files[AREA], nil, ending)
+      if ending == "reload" then
+        env.start(host, "service.luau")
+        env.start(host, "robot.luau")
+      end
+    end
+    -- An instance ending leaves the area another wrote since.
+    local host, robot = thinking()
+    host.nowMs += stage.CAPTION_MS
+    robot.call("update")
+    local theirs = host.globals.noctalia.json.encode({ output = "DP-2", rect = {}, incarnation = "DP-2 1", ts = 1 })
+    host.files[AREA] = theirs
+    host.exit("robot.luau", "reload")
+    t.eq(host.files[AREA], theirs)
+  end)
+
     host.service.call("update")
     t.eq(host.files[AREA], nil)
   end)

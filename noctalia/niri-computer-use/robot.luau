@@ -328,4 +328,10 @@ function update()
   draw()
 end
 
+-- Noctalia calls this before it ends the runtime: when the layer is hidden, the plugin
+-- reloaded, disabled or uninstalled, the shell shut down, or the output gone.
+function onExit()
+  retract()
+end
+
 draw()

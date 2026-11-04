@@ -67,6 +67,7 @@ function M.entry(sources, host, entryPath: string)
   end
   function runtime.start()
     host.destroyed[entryPath] = nil
+    host.runtimes[entryPath] = runtime
     local loading = host.loading
     host.loading = entryPath
     load(entryPath, true)

@@ -71,8 +71,10 @@ function M.new(sources)
     fileOps = {},
     -- When each file was last written, in seconds, as fileInfo() gives it.
     mtimes = {},
-    -- The entry whose top level runs now, and the entries whose runtime Noctalia ended.
+    -- The entry whose top level runs now, each entry's runtime, and the entries whose
+    -- runtime Noctalia ended.
     loading = nil,
+    runtimes = {},
     destroyed = {},
   }
 
@@ -200,17 +202,7 @@ function M.new(sources)
       -- Noctalia ends a hidden layer's runtime: it hears of nothing after.
       hide = function(id)
         table.insert(host.layerCalls, { command = "hide", id = id })
-        local entry = `{id}.luau`
-        host.destroyed[entry] = true
-        for key, watchers in host.watchers do
-          local kept = {}
-          for _, watcher in watchers do
-            if watcher.owner ~= entry then
-              table.insert(kept, watcher)
-            end
-          end
-          host.watchers[key] = kept
-        end
+        host.exit(`{id}.luau`, "reload")
       end,
       configure = function(id, patch)
         table.insert(host.layerCalls, { command = "configure", id = id, patch = copy(patch) })
@@ -321,6 +313,32 @@ function M.new(sources)
     desktopWidget = desktopWidget,
     layer = layer,
   }
+
+  -- Ends an entry's runtime without a word to it, as a crash would: it hears of nothing
+  -- after.
+  function host.destroy(entry: string)
+    host.destroyed[entry] = true
+    for key, watchers in host.watchers do
+      local kept = {}
+      for _, watcher in watchers do
+        if watcher.owner ~= entry then
+          table.insert(kept, watcher)
+        end
+      end
+      host.watchers[key] = kept
+    end
+  end
+
+  -- Ends an entry's runtime as Noctalia 5.4 does on a hide, a reload, a disable, an
+  -- uninstall, a shutdown or its output going away: it calls the entry's onExit first.
+  function host.exit(entry: string, reason: string)
+    local runtime = host.runtimes[entry]
+    local onExit = if runtime and not host.destroyed[entry] then rawget(runtime.env, "onExit") else nil
+    if onExit then
+      onExit(0, reason)
+    end
+    host.destroy(entry)
+  end
 
   -- Sends a line to the newest stream, as the watch would print it.
   function host.line(text: string)
