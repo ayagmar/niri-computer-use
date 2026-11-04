@@ -42,30 +42,17 @@ local function size(): number
   return if type(named) == "string" and stage.SIZES[named] then stage.SIZES[named] else stage.MEDIUM
 end
 
--- Painted frames are kept per palette, in `<plugin data>/robot/<palette>/`. Another
--- Noctalia session may draw another palette's set from the same directory, so a set is
--- removed only once no instance used it for GC_S, by its `used` stamp, which each
--- instance renews when it is older than USED_S, and another writer's temporary file only
--- once it is TMP_S old. Directories stay: Noctalia can't remove one.
-local GC_S = 7 * 86400
-local USED_S = 3600
+-- Painted frames are kept per palette, in `<plugin data>/robot/<palette>/`, and never
+-- removed: another Noctalia session may draw any set, or start to at any moment. Only a
+-- temporary file in this palette's set that a writer left TMP_S ago is removed.
 local TMP_S = 3600
 
-local function older(path: string, ageS: number, nowS: number): boolean
-  local info = noctalia.fileInfo(path)
-  return info ~= nil and not info.isDir and nowS - info.mtime > ageS
-end
-
--- Removes the sets no instance used for GC_S, and temporary files TMP_S old.
-local function collect(root: string, key: string, nowS: number)
-  for _, name in noctalia.listDir(root) or {} do
-    local dir = `{root}/{name}`
-    local unused = name ~= key and older(`{dir}/used`, GC_S, nowS)
-    for _, file in noctalia.listDir(dir) or {} do
-      local path = `{dir}/{file}`
-      if unused or (file:match("%.tmp$") and older(path, TMP_S, nowS)) then
-        noctalia.removeFile(path)
-      end
+local function stale(dir: string, nowS: number)
+  for _, file in noctalia.listDir(dir) or {} do
+    local path = `{dir}/{file}`
+    local info = if file:match("%.tmp$") then noctalia.fileInfo(path) else nil
+    if info and not info.isDir and nowS - info.mtime > TMP_S then
+      noctalia.removeFile(path)
     end
   end
 end
@@ -83,9 +70,7 @@ local function themed(): { [string]: string }
   if palette == nil or data == nil then
     return bundled
   end
-  local root = `{data}/robot`
-  local key = art.key(palette)
-  local dir = `{root}/{key}`
+  local dir = `{data}/robot/{art.key(palette)}`
   if not noctalia.mkdirAll(dir) then
     return bundled
   end
@@ -105,12 +90,7 @@ local function themed(): { [string]: string }
     end
     paths[pose] = path
   end
-  local nowS = noctalia.nowMs() / 1000
-  local used = `{dir}/used`
-  if not noctalia.fileExists(used) or older(used, USED_S, nowS) then
-    noctalia.writeFile(used, tostring(math.floor(nowS)))
-  end
-  collect(root, key, nowS)
+  stale(dir, noctalia.nowMs() / 1000)
   return paths
 end
 

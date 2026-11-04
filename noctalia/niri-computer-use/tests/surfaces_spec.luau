@@ -748,15 +748,17 @@ t.group("robot", function()
     t.ok(host.files[dir .. "/idle.svg.17.tmp"] ~= nil, "and another writer's fresh file")
   end)
 
-  t.test("a set no instance used for a week is removed, and a temporary file an hour old", function()
+  -- The bug: a set removed as unused while a long-lived robot drew it, or while another
+  -- session started to reuse it.
+  t.test("another palette's set is never removed; in its own, a temporary file an hour old is", function()
     local host = overlay()
     local first = drawn(host)
-    host.nowMs += 8 * 86400 * 1000
+    host.nowMs += 30 * 86400 * 1000
     host.colors.primary = "#9ECE6A"
     env.start(host, "robot.luau")
     local dir = drawn(host)[1]:match("^(.*)/[^/]*$")
     for _, path in first do
-      t.eq(host.files[path], nil, `{path} is gone`)
+      t.ok(host.files[path] ~= nil, `{path} is kept`)
     end
     host.files[dir .. "/idle.svg.1.tmp"], host.mtimes[dir .. "/idle.svg.1.tmp"] = "old", host.nowMs / 1000 - 7200
     host.files[dir .. "/idle.svg.2.tmp"], host.mtimes[dir .. "/idle.svg.2.tmp"] = "new", host.nowMs / 1000 - 60
