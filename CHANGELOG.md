@@ -2,6 +2,12 @@
 
 All notable changes to this project are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## Unreleased
+
+### Changed
+
+- tokio 1.54.1, rmcp 3.8.0 and rustix 1.1.6, and the site moves to Starlight 0.42.7.
+
 ## 0.1.7 - 2026-10-30
 
 ### Breaking
