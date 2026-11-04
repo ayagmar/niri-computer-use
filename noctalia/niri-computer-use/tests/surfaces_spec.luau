@@ -497,19 +497,57 @@ t.group("robot", function()
     return nil
   end
 
-  -- Where the drawn tree puts the robot and its caption, from its two spacers.
-  local function corner(tree)
-    local at = {}
-    local function walk(n)
-      if n.props and (n.props.key == "left" or n.props.key == "top") then
-        at[n.props.key] = n.props
-      end
-      for _, child in n.children or {} do
-        walk(child)
+  -- A node's size in the tree's units: as given, or its children's, laid out along a
+  -- row or a column with its gap. Hidden nodes take no room.
+  local function sized(n)
+    local main, cross = 0, 0
+    local horizontal = n.type == "row"
+    local shown = 0
+    for _, child in n.children or {} do
+      if child.props.visible ~= false then
+        local w, h = sized(child)
+        main += if horizontal then w else h
+        cross = math.max(cross, if horizontal then h else w)
+        shown += 1
       end
     end
-    walk(tree)
-    return at.left.width, at.top.height
+    main += (n.props.gap or 0) * math.max(0, shown - 1)
+    local w = n.props.width or (if horizontal then main else cross)
+    local h = n.props.height or (if horizontal then cross else main)
+    return w, h
+  end
+
+  -- Where the node keyed `key` is in the tree, top-left, in the tree's units, with every
+  -- container aligned at its start, as the overlay's are.
+  local function placed(tree, key)
+    local function walk(n, x, y)
+      if n.props.key == key then
+        return x, y
+      end
+      local horizontal = n.type == "row"
+      for _, child in n.children or {} do
+        if child.props.visible ~= false then
+          local fx, fy = walk(child, x, y)
+          if fx then
+            return fx, fy
+          end
+          local w, h = sized(child)
+          if horizontal then
+            x += w + (n.props.gap or 0)
+          else
+            y += h + (n.props.gap or 0)
+          end
+        end
+      end
+      return nil
+    end
+    return walk(tree, 0, 0)
+  end
+
+  -- Where the drawn tree puts the robot and its caption, below the robot's room to hop.
+  local function corner(tree)
+    local x, y = placed(tree, "group")
+    return x, y + D.lift
   end
 
   t.test("draws one frame of the robot beside the click, placed in the layer", function()
@@ -583,6 +621,9 @@ t.group("robot", function()
     local host, robot = overlay()
     -- It popped in at home with the lease, and glides from there to the click.
     host.event(F.click_aim)
+    t.eq(host.updateInterval, stage.READY_MS, "nothing to draw while it gets ready")
+    host.nowMs += stage.READY_MS
+    robot.call("update")
     t.eq(host.updateInterval, stage.FRAME_MS)
     local steps = {}
     for _ = 1, 4 do
@@ -714,6 +755,30 @@ t.group("robot", function()
         t.ok(env.sources[image.props.path] ~= nil, `{broken}: {image.props.path} is in the plugin`)
       end
       t.eq(next(host.files), nil, `{broken}: nothing left behind`)
+    end
+  end)
+
+  -- The bug: the ring and the robot laid out in one row with the ring's offset taken
+  -- from the robot's, so the ring sat beside the robot instead of on the click.
+  t.test("draws a click's ring on the click and the robot beside it, at any UI scale", function()
+    for _, scale in { 1, 1.5 } do
+      local host, robot = overlay()
+      host.settings["accessibility.ui_scale"] = scale
+      host.event(F.click_aim)
+      host.nowMs += stage.READY_MS + stage.GLIDE_MS + 10
+      robot.call("update")
+      local ring = host.find(host.layer.tree, function(n)
+        return n.props.key == "ring"
+      end)
+      t.ok(ring ~= nil, `{scale}: a ring`)
+      t.eq(ring.props.border, "primary")
+      local x, y = placed(host.layer.tree, "ring")
+      t.near((x + ring.props.width / 2) * scale, 650, 1, `{scale}: on the click across`)
+      t.near((y + ring.props.height / 2) * scale, 320.4, 1, `{scale}: on the click down`)
+      local left, top = corner(host.layer.tree)
+      local d = stage.dims(stage.MEDIUM, scale)
+      t.near(left * scale + (d.inner + stage.captionWidth("click", d) + d.size) * scale, 650 - stage.GAP, 1, `{scale}: robot across`)
+      t.near((top - D.lift + d.lift) * scale + d.robot, 320.4 - stage.GAP, 1, `{scale}: robot down`)
     end
   end)
 

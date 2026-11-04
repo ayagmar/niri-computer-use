@@ -78,8 +78,13 @@ end
 
 local frames = themed()
 
-local function tree(frame, scale: number)
-  local d = stage.dims(frame.size, scale)
+-- A spacer, `width` by `height` in the tree's units.
+local function gap(width: number, height: number)
+  return ui.row({ width = width, height = height }, {})
+end
+
+-- The robot, with its room to hop above it, and its caption beside it.
+local function group(frame, d, box)
   local sprite = {}
   -- Every frame stays mounted, so each image is read once, and only one shows.
   for _, pose in stage.POSES do
@@ -91,7 +96,12 @@ local function tree(frame, scale: number)
       visible = pose == frame.pose,
     }))
   end
-  local group = { ui.row({ key = "sprite" }, sprite) }
+  local parts = {
+    ui.column({ key = "sprite", width = d.size, height = d.size + d.lift, align = "start" }, {
+      gap(1, d.lift - frame.lift),
+      ui.row({}, sprite),
+    }),
+  }
   if frame.caption then
     local caption = ui.row({
       key = "caption",
@@ -110,16 +120,64 @@ local function tree(frame, scale: number)
         maxWidth = frame.width - 2 * d.pad,
       }),
     })
-    table.insert(group, if frame.side == "left" then 1 else #group + 1, caption)
+    -- Level with the robot below its room to hop.
+    local beside = ui.column({ align = "start" }, { gap(1, d.lift), caption })
+    table.insert(parts, if frame.side == "left" then 1 else #parts + 1, beside)
+  end
+  return ui.row({
+    key = "group",
+    width = box.width / d.scale,
+    height = box.height / d.scale,
+    gap = d.inner,
+    align = "center",
+    opacity = frame.opacity,
+  }, parts)
+end
+
+-- A click's ring: a circle's outline in the accent colour.
+local function ring(frame, d, box)
+  local size = box.width / d.scale
+  return ui.box({
+    key = "ring",
+    width = size,
+    height = size,
+    radius = size / 2,
+    border = "primary",
+    borderWidth = 2,
+    opacity = frame.ring.opacity,
+  })
+end
+
+-- The robot and a click's ring placed on the layer, side by side along the axis that
+-- keeps them apart: the tree has no way to overlap them.
+local function tree(frame, scale: number)
+  local d = stage.dims(frame.size, scale)
+  local boxes, axis = stage.layout(frame, d)
+  local nodes = {}
+  for _, box in boxes do
+    nodes[box.key] = if box.key == "ring" then ring(frame, d, box) else group(frame, d, box)
   end
   -- Noctalia multiplies every size in the tree by the UI scale, the spacers' too.
-  return ui.column({ align = "start" }, {
-    ui.row({ key = "top", width = 1, height = frame.y / scale }, {}),
-    ui.row({ align = "center" }, {
-      ui.row({ key = "left", width = frame.x / scale, height = 1 }, {}),
-      ui.row({ key = "group", gap = d.inner, align = "center", opacity = frame.opacity }, group),
-    }),
-  })
+  local placed = {}
+  if axis == "x" then
+    local top, at = math.huge, 0
+    for _, box in boxes do
+      top = math.min(top, box.y)
+    end
+    for _, box in boxes do
+      table.insert(placed, gap((box.x - at) / scale, 1))
+      table.insert(placed, ui.column({ align = "start" }, { gap(1, (box.y - top) / scale), nodes[box.key] }))
+      at = box.x + box.width
+    end
+    return ui.column({ align = "start" }, { gap(1, top / scale), ui.row({ align = "start" }, placed) })
+  end
+  local at = 0
+  for _, box in boxes do
+    table.insert(placed, gap(1, (box.y - at) / scale))
+    table.insert(placed, ui.row({ align = "start" }, { gap(box.x / scale, 1), nodes[box.key] }))
+    at = box.y + box.height
+  end
+  return ui.column({ align = "start" }, placed)
 end
 
 local function schedule(frame, nowMs: number)

@@ -7,12 +7,14 @@ All notable changes to this project are documented here. The format follows [Kee
 ### Added
 
 - The Noctalia plugin's `Robot size` setting: the overlay's robot is 40, 56 or 72 pixels tall, before the UI scale, and its caption grows with it.
+- The overlay shows a click: the robot hops, and a ring grows and fades on the exact point. Before it sets off for a new spot, the robot looks and crouches toward it.
 
 ### Changed
 
 - tokio 1.54.1, rmcp 3.8.0 and rustix 1.1.6, and the site moves to Starlight 0.42.7.
 - The overlay's robot is 56 pixels tall by default instead of 32, redrawn for that size, with a 13-point caption.
 - The overlay's robot takes the Noctalia theme's colours instead of fixed light grey ones.
+- The overlay's robot stands 16 pixels from a click instead of 12, which leaves room for the ring.
 
 ## 0.1.7 - 2026-10-30
 

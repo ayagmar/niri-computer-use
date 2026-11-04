@@ -34,7 +34,7 @@ const ANTENNA: [u8; 3] = [0x4c, 0x8d, 0xff];
 const TIP: (f64, f64) = (28.0, 5.0);
 /// `lib/stage.luau`'s sizes, in logical pixels at a UI scale of 1.
 const SPRITE: f64 = 56.0;
-const GAP: f64 = 12.0;
+const GAP: f64 = 16.0;
 /// How far the antenna may be from where it should be, in logical pixels: its circle
 /// rasterized at fractional scales, and the robot's position rounded to whole pixels.
 const PLACED: f64 = 2.5;

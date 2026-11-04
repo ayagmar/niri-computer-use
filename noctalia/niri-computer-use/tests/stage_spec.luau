@@ -61,9 +61,32 @@ local function clearance(p, left, top, right, bottom)
 end
 
 local function same(a, b, label)
-  for _, key in { "output", "x", "y", "pose", "caption", "role", "opacity", "visible" } do
+  for _, key in { "output", "x", "y", "pose", "caption", "role", "opacity", "visible", "lift" } do
     t.eq(a[key], b[key], `{label}: {key}`)
   end
+  local ra, rb = a.ring or {}, b.ring or {}
+  for _, key in { "x", "y", "size", "opacity" } do
+    t.eq(ra[key], rb[key], `{label}: ring {key}`)
+  end
+end
+
+-- Whether a frame's ring stays on its output, clear of the robot, its room to hop and
+-- its caption, and centred on `p`.
+local function ringFits(f, p, area, scale, label)
+  local boxes = stage.layout(f, stage.dims(f.size, scale))
+  local ring, group
+  for _, box in boxes do
+    if box.key == "ring" then
+      ring = box
+    else
+      group = box
+    end
+  end
+  t.ok(ring.x >= 0 and ring.y >= 0 and ring.x + ring.width <= area.width and ring.y + ring.height <= area.height, label .. ": on the output")
+  local apart = ring.x >= group.x + group.width or ring.x + ring.width <= group.x or ring.y >= group.y + group.height or ring.y + ring.height <= group.y
+  t.ok(apart, label .. ": clear of the robot")
+  t.near(ring.x + ring.width / 2, p.x, 0.5, label .. ": centred across")
+  t.near(ring.y + ring.height / 2, p.y, 0.5, label .. ": centred down")
 end
 
 t.group("stage", function()
@@ -109,7 +132,7 @@ t.group("stage", function()
       local wide = { x = 0, y = 0, width = 2048, height = 1152 }
       local inside = stage.besideBox("A", wide, HDMI, D)
       t.eq(inside.x, 2048 - stage.MARGIN - D.robot)
-      t.eq(inside.y, stage.MARGIN)
+      t.eq(inside.y, stage.MARGIN + D.room, "with its room to hop")
       for _, b in { { x = 1500, y = 300, width = 540, height = 400 }, { x = 8, y = 8, width = 300, height = 1100 } } do
         local s = stage.besideBox("A", b, HDMI, stage.dims(stage.MEDIUM, 1.5))
         local robot = stage.MEDIUM * 1.5
@@ -120,7 +143,7 @@ t.group("stage", function()
   end)
 
   t.group("frames", function()
-    t.test("pops in beside its first point, glides to the next, then taps", function()
+    t.test("pops in beside its first point, gets ready, glides to the next, then taps and hops", function()
       local model, st = desk()
       live.feed(model, click(1, 650, 320.4), T)
       local first = frame(model, st, T)
@@ -130,20 +153,28 @@ t.group("stage", function()
       local popped = frame(model, st, T + stage.POP_MS)
       t.eq(popped.opacity, 1)
       t.ok(not popped.moving, "still once in")
-      t.eq(frame(model, st, T + stage.GLIDE_MS + 10).pose, "tap")
-      local still = frame(model, st, T + stage.GLIDE_MS + stage.TAP_MS + 10)
+      local TRAVEL = stage.READY_MS + stage.GLIDE_MS
+      local tapping = frame(model, st, T + TRAVEL + 10)
+      t.eq(tapping.pose, "tap")
+      t.eq(tapping.lift, D.lift, "hops as it taps")
+      local still = frame(model, st, T + TRAVEL + stage.TAP_MS + 10)
       t.eq(still.pose, "idle")
+      t.eq(still.lift, 0)
       t.ok(not still.moving)
 
       live.feed(model, click(2, 1500, 900), T + 1000)
       local leaving = frame(model, st, T + 1000)
-      local midway = frame(model, st, T + 1070)
-      local there = frame(model, st, T + 1000 + stage.GLIDE_MS)
+      t.eq(leaving.pose, "ready-r", "looks toward where it goes")
+      t.eq(leaving.nextMs, T + 1000 + stage.READY_MS, "and changes nothing until it sets off")
+      t.eq(leaving.caption, nil)
+      t.eq(frame(model, st, T + 1000 + stage.READY_MS - 1).x, leaving.x, "standing where it was")
+      local midway = frame(model, st, T + 1000 + stage.READY_MS + 70)
+      local there = frame(model, st, T + 1000 + TRAVEL)
       t.ok(midway.moving, "moving while gliding")
       t.eq(midway.pose, "lean-r")
       t.ok(midway.x > leaving.x and midway.x < there.x, "moving toward the new point")
       t.ok(not there.moving)
-      t.eq(frame(model, st, T + 1000 + stage.GLIDE_MS + 10).pose, "tap")
+      t.eq(frame(model, st, T + 1000 + TRAVEL + 10).pose, "tap")
     end)
 
     -- The bug: the robot moving while the agent's own settle wait samples the screen,
@@ -293,6 +324,81 @@ t.group("stage", function()
       t.eq(f.opacity, 0)
     end)
 
+    -- The bug: a ring sized in the UI scale's units beside a robot placed in logical
+    -- pixels, overlapping the robot at 1.5, or running off the output by an edge click.
+    t.test("a click's ring grows and fades on the point, clear of the robot, at any size and edge", function()
+      local area = { width = 1280, height = 720 }
+      local points = {
+        { x = 640, y = 360 },
+        { x = 1, y = 360 },
+        { x = 6, y = 6 },
+        { x = 1279, y = 700 },
+        { x = 640, y = 3 },
+        { x = 1270, y = 715 },
+      }
+      for _, scale in { 1, 1.25, 1.5 } do
+        for _, size in { 40, 56, 72 } do
+          for _, p in points do
+            local model, st = desk()
+            local at = envAt(scale, size)
+            at.areas = { ["HDMI-A-1"] = area }
+            local aim = { output = "HDMI-A-1", area = area, points = { p } }
+            live.feed(model, fx.with(F.click_aim, { aim = aim }), T)
+            local label = `size {size} at {scale}, click {p.x},{p.y}`
+            local sizes, opacities, steps = {}, {}, {}
+            local f = frame(model, st, T, at)
+            local seen = 0
+            while f.nextMs and f.nextMs < T + 2000 do
+              f = frame(model, st, f.nextMs, at)
+              local step = f.ring and `{f.ring.size}/{f.ring.opacity}`
+              if step and not steps[step] then
+                steps[step] = true
+                seen += 1
+                ringFits(f, p, area, scale, label)
+                table.insert(sizes, f.ring.size)
+                table.insert(opacities, f.ring.opacity)
+              end
+            end
+            local edge = math.min(p.x, p.y, area.width - p.x, area.height - p.y)
+            if edge >= stage.RIPPLE_MIN then
+              t.eq(seen, stage.RIPPLE_STEPS, label .. ": every step drawn")
+              t.ok(sizes[#sizes] > sizes[1] and opacities[#opacities] < opacities[1], label .. ": grows and fades")
+              t.ok(sizes[#sizes] / 2 <= math.min(stage.RIPPLE_RADIUS * scale, edge), label .. ": no bigger than it may be")
+            else
+              t.eq(seen, 0, label .. ": no ring where none fits")
+            end
+          end
+        end
+      end
+    end)
+
+    t.test("the ring starts with the tap: after the glide, or at the end when the agent looked", function()
+      local TRAVEL = stage.READY_MS + stage.GLIDE_MS
+      local model, st = desk()
+      live.feed(model, click(1, 650, 320.4), T)
+      t.eq(frame(model, st, T + TRAVEL - 1).ring, nil)
+      t.ok(frame(model, st, T + TRAVEL).ring ~= nil)
+      t.eq(frame(model, st, T + TRAVEL + stage.RIPPLE_MS).ring, nil, "gone after RIPPLE_MS")
+
+      local looked, lst = desk()
+      live.feed(looked, click(1, 650, 320.4), T)
+      live.feed(looked, click(1, 650, 320.4, "look"), T + 20)
+      t.eq(frame(looked, lst, T + TRAVEL + 10).ring, nil, "not while the agent looks")
+      live.feed(looked, click(1, 650, 320.4, "end"), T + 900)
+      local f = frame(looked, lst, T + 900)
+      t.ok(f.ring ~= nil and f.pose == "tap", "tap and ring at the end")
+    end)
+
+    -- The bug: a click whose end came before the robot arrived lost its tap and ring.
+    t.test("a click that ends before the robot arrives still taps there", function()
+      local model, st = desk()
+      live.feed(model, click(1, 650, 320.4), T)
+      live.feed(model, click(1, 650, 320.4, "end"), T + 20)
+      local f = frame(model, st, T + stage.READY_MS + stage.GLIDE_MS + 10)
+      t.eq(f.pose, "tap")
+      t.ok(f.ring ~= nil)
+    end)
+
     t.test("a drag glides in its grab from beside the start to beside the end", function()
       local model, st = desk()
       live.feed(model, click(1, 1800, 1000), T)
@@ -433,6 +539,13 @@ t.group("stage", function()
           end
           if f.caption then
             t.ok(captions[f.caption], label .. `: a caption from nowhere: {f.caption}`)
+          end
+          -- A frame held while the agent looks at another output keeps its ring.
+          local held = call and call.phase == "look" and call.aim and call.aim.output ~= f.output
+          if f.ring and not held then
+            local point = call and call.aim and call.aim.points[1]
+            t.ok(call and call.tool == "click" and point ~= nil, label .. ": a ring without a click")
+            ringFits(f, point, area, 1, label)
           end
         end
         if f.moving then

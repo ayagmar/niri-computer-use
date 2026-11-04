@@ -15,19 +15,27 @@ local M = {}
 -- The robot's sizes, from the `overlay_size` setting, in logical pixels at a UI scale of 1.
 M.SIZES = { small = 40, medium = 56, large = 72 }
 M.MEDIUM = 56
--- Between the robot and the point or box it acts on.
-M.GAP = 12
+-- Between the robot, with its room to hop, and the point or box it acts on.
+M.GAP = 16
 -- Kept clear of the output's edges.
 M.MARGIN = 8
 -- The robot's spot when it has no target: this far in from the bottom-right corner.
 M.HOME = 48
 
 M.POP_MS = 120
+-- Before a glide the robot looks and crouches toward where it is going.
+M.READY_MS = 90
 M.GLIDE_MS = 140
 M.DRAG_MS = 300
 -- How often the robot is drawn while it pops in or glides.
 M.FRAME_MS = 16
 M.TAP_MS = 90
+-- A click's ring: it grows over RIPPLE_STEPS steps to at most RIPPLE_RADIUS, times the
+-- UI scale, while it fades.
+M.RIPPLE_MS = 300
+M.RIPPLE_STEPS = 5
+M.RIPPLE_RADIUS = 15
+M.RIPPLE_MIN = 4
 M.SCROLL_MS = 120
 M.SCROLL_SWAPS = 4
 M.TYPE_MS = 140
@@ -45,6 +53,8 @@ M.POSES = {
   "idle",
   "lean-l",
   "lean-r",
+  "ready-l",
+  "ready-r",
   "tap",
   "type-a",
   "type-b",
@@ -77,8 +87,12 @@ export type Dims = {
   captionMax: number,
   -- Between the robot and its caption.
   inner: number,
+  -- The room above the robot that it hops into, at a UI scale of 1.
+  lift: number,
   robot: number,
   wide: number,
+  -- The room above the robot in logical pixels.
+  room: number,
 }
 
 -- The caption's font is 13 at the medium size, and the rest of it follows the font: a
@@ -88,6 +102,7 @@ function M.dims(size: number, scale: number): Dims
   local k = font / 11
   local inner = math.floor(size / 7 + 0.5)
   local captionMax = math.floor(168 * k + 0.5)
+  local lift = math.floor(4 * size / 56 + 0.5)
   return {
     size = size,
     scale = scale,
@@ -98,8 +113,10 @@ function M.dims(size: number, scale: number): Dims
     captionMin = math.floor(40 * k + 0.5),
     captionMax = captionMax,
     inner = inner,
+    lift = lift,
     robot = size * scale,
     wide = (inner + captionMax) * scale,
+    room = lift * scale,
   }
 end
 
@@ -141,8 +158,12 @@ export type Frame = {
   -- The caption's palette role and its width in logical pixels at a UI scale of 1.
   role: string,
   width: number,
-  -- The robot's size at a UI scale of 1.
+  -- The robot's size at a UI scale of 1, and how far it hops above its spot, from 0 to
+  -- `Dims.lift`, at a UI scale of 1.
   size: number,
+  lift: number,
+  -- A click's ring, centred on the click, in whole logical pixels.
+  ring: Ring?,
   side: string,
   opacity: number,
   -- Popping in or gliding, so nextMs is the next frame's.
@@ -150,6 +171,8 @@ export type Frame = {
   -- When the next change is due without a new record, if sooner than the usual tick.
   nextMs: number?,
 }
+
+export type Ring = { x: number, y: number, size: number, opacity: number }
 
 type Target = {
   -- "point", "box", "drag", "home", "rest" (stay where it stands), or "window" for a
@@ -171,6 +194,8 @@ type Scene = {
   -- The agent is looking: snap to the spot and change nothing.
   still: boolean,
   drag: boolean,
+  -- A click's point and when its ring starts.
+  ring: { point: Point, fromMs: number }?,
 }
 
 function M.new(): Stage
@@ -199,13 +224,14 @@ function M.captionWidth(text: string, d: Dims): number
   return math.clamp(math.floor(d.char * chars + 2 * d.pad + 0.5), d.captionMin, d.captionMax)
 end
 
--- Whether a robot at `spot`, with the widest caption on its side, keeps clear of the edges.
+-- Whether a robot at `spot`, with its room to hop and the widest caption on its side,
+-- keeps clear of the edges. A spot is the robot's top-left corner, below that room.
 local function fits(spot: Spot, area: Area, d: Dims): boolean
   local robot, wide = d.robot, d.wide
   local left = if spot.side == "left" then spot.x - wide else spot.x
   local right = if spot.side == "left" then spot.x + robot else spot.x + robot + wide
   return left >= M.MARGIN
-    and spot.y >= M.MARGIN
+    and spot.y - d.room >= M.MARGIN
     and right <= area.width - M.MARGIN
     and spot.y + robot <= area.height - M.MARGIN
 end
@@ -215,11 +241,12 @@ local function clamped(spot: Spot, area: Area, d: Dims): Spot
   local robot, wide = d.robot, d.wide
   local minX = if spot.side == "left" then M.MARGIN + wide else M.MARGIN
   local maxX = if spot.side == "left" then area.width - M.MARGIN - robot else area.width - M.MARGIN - robot - wide
+  local minY = M.MARGIN + d.room
   local maxY = area.height - M.MARGIN - robot
   return {
     output = spot.output,
     x = math.clamp(spot.x, minX, math.max(minX, maxX)),
-    y = math.clamp(spot.y, M.MARGIN, math.max(M.MARGIN, maxY)),
+    y = math.clamp(spot.y, minY, math.max(minY, maxY)),
     side = spot.side,
   }
 end
@@ -228,8 +255,8 @@ end
 -- tooltips that open below-right of the pointer stay clear.
 local CORNERS = { { -1, -1 }, { 1, -1 }, { -1, 1 }, { 1, 1 } }
 
--- The spot beside point `p`, its nearest corner GAP away on both axes, and which corner
--- was taken. `only` takes that corner, as a drag's start does its end's.
+-- The spot beside point `p`, its nearest corner GAP away on both axes, room to hop
+-- included, and which corner was taken. `only` takes that corner, as a drag's start does its end's.
 function M.besidePoint(output: string, p: Point, area: Area, d: Dims, only: number?): (Spot, number)
   local robot = d.robot
   local function corner(i: number): Spot
@@ -237,7 +264,7 @@ function M.besidePoint(output: string, p: Point, area: Area, d: Dims, only: numb
     return {
       output = output,
       x = if c[1] < 0 then p.x - M.GAP - robot else p.x + M.GAP,
-      y = if c[2] < 0 then p.y - M.GAP - robot else p.y + M.GAP,
+      y = if c[2] < 0 then p.y - M.GAP - robot else p.y + M.GAP + d.room,
       side = if c[1] < 0 then "left" else "right",
     }
   end
@@ -258,7 +285,7 @@ function M.besideBox(output: string, b: Rect, area: Area, d: Dims): Spot
   local options: { Spot } = {
     { output = output, x = b.x + b.width + M.GAP, y = cy, side = "right" },
     { output = output, x = b.x - M.GAP - robot, y = cy, side = "left" },
-    { output = output, x = cx, y = b.y + b.height + M.GAP, side = "right" },
+    { output = output, x = cx, y = b.y + b.height + M.GAP + d.room, side = "right" },
     { output = output, x = cx, y = b.y - M.GAP - robot, side = "right" },
   }
   for _, spot in options do
@@ -266,7 +293,7 @@ function M.besideBox(output: string, b: Rect, area: Area, d: Dims): Spot
       return spot
     end
   end
-  local inside = { output = output, x = b.x + b.width - M.MARGIN - robot, y = b.y + M.MARGIN, side = "left" }
+  local inside = { output = output, x = b.x + b.width - M.MARGIN - robot, y = b.y + M.MARGIN + d.room, side = "left" }
   return clamped(inside, area, d)
 end
 
@@ -336,6 +363,23 @@ end
 
 local TYPING = { type_text = true, paste = true, key = true, set_element_text = true }
 
+-- When the robot answers `call`'s action with a tap, a scroll or a click's ring: once it
+-- has arrived beside it, or at the call's end when the agent looked.
+local function answerMs(call: any): number
+  if call.lookMs then
+    return call.endMs or math.huge
+  end
+  local travel = if call.tool == "drag" then M.DRAG_MS else M.READY_MS + M.GLIDE_MS
+  return (call.aimMs or call.startMs) + travel
+end
+
+local function ringOf(call: any, target: Target): { point: Point, fromMs: number }?
+  if call.tool ~= "click" or target.kind ~= "point" then
+    return nil
+  end
+  return { point = target.point :: Point, fromMs = answerMs(call) }
+end
+
 local function running(call: any, target: Target, caption: string?, nowMs: number): Scene
   if call.phase == "look" then
     return { target = target, pose = "idle", caption = caption, role = "primary", still = true, drag = false }
@@ -344,14 +388,22 @@ local function running(call: any, target: Target, caption: string?, nowMs: numbe
   if TYPING[call.tool] then
     pose, nextMs = typing(call, nowMs)
   else
-    local glide = if call.tool == "drag" then M.DRAG_MS else M.GLIDE_MS
-    pose, nextMs = workingPose(call, (call.aimMs or call.startMs) + glide, nowMs)
+    pose, nextMs = workingPose(call, answerMs(call), nowMs)
   end
-  return { target = target, pose = pose, caption = caption, role = "primary", nextMs = nextMs, still = false, drag = call.tool == "drag" }
+  return {
+    target = target,
+    pose = pose,
+    caption = caption,
+    role = "primary",
+    nextMs = nextMs,
+    still = false,
+    drag = call.tool == "drag",
+    ring = ringOf(call, target),
+  }
 end
 
--- A call that ended within CAPTION_MS: its caption, a shrug for an error, and the tap
--- or scroll it held back while the agent looked.
+-- A call that ended within CAPTION_MS: its caption, a shrug for an error, and its tap
+-- or scroll: held back while the agent looked, or still going when the end came first.
 local function ended(call: any, target: Target, caption: string?, nowMs: number, tr: Tr): Scene
   local endMs = call.endMs :: number
   local nextMs = endMs + M.CAPTION_MS
@@ -369,10 +421,19 @@ local function ended(call: any, target: Target, caption: string?, nowMs: number,
     }
   end
   local pose, poseMs = "idle", nil
-  if call.lookMs then
-    pose, poseMs = workingPose(call, endMs, nowMs)
+  if not TYPING[call.tool] then
+    pose, poseMs = workingPose(call, answerMs(call), nowMs)
   end
-  return { target = target, pose = pose, caption = caption, role = "primary", nextMs = soonest(poseMs, nextMs), still = false, drag = false }
+  return {
+    target = target,
+    pose = if pose == "grab" then "idle" else pose,
+    caption = caption,
+    role = "primary",
+    nextMs = soonest(poseMs, nextMs),
+    still = false,
+    drag = false,
+    ring = ringOf(call, target),
+  }
 end
 
 local function resting(output: string, pose: string, caption: string?, role: string, nextMs: number?): Scene
@@ -502,7 +563,8 @@ local function ease(t: number): number
   return 1 - (1 - t) ^ 3
 end
 
--- Where the robot is drawn now: along its glide, or at its spot.
+-- Where the robot is drawn now: along its glide, or at its spot, and whether it is
+-- under way. Before a glide's start it stands at its start, getting ready.
 local function position(st: Stage, nowMs: number): (number, number, boolean)
   local at = st.at :: Spot
   local from = st.from
@@ -513,8 +575,8 @@ local function position(st: Stage, nowMs: number): (number, number, boolean)
   return from.x + (at.x - from.x) * t, from.y + (at.y - from.y) * t, true
 end
 
--- Moves the stage toward `spot`: a pop-in on a new output, a glide on the same one, and
--- a snap while the agent looks.
+-- Moves the stage toward `spot`: a pop-in on a new output, a glide on the same one after
+-- READY_MS getting ready, a drag's glide at once, and a snap while the agent looks.
 local function move(st: Stage, spot: Spot, from: Spot?, still: boolean, nowMs: number)
   if still then
     if not sameSpot(st.at, spot) or st.from then
@@ -532,8 +594,46 @@ local function move(st: Stage, spot: Spot, from: Spot?, still: boolean, nowMs: n
   end
   local x, y = position(st, nowMs)
   local start = from or { output = spot.output, x = x, y = y, side = spot.side }
-  st.from, st.at, st.startMs = start, spot, nowMs
+  st.from, st.at = start, spot
+  st.startMs = if from then nowMs else nowMs + M.READY_MS
   st.durationMs = if from then M.DRAG_MS else M.GLIDE_MS
+end
+
+-- The largest ring around `p` that stays on the output and clear of the robot at `spot`
+-- with its room to hop and its widest caption, or nil when none of RIPPLE_MIN fits.
+-- Beside a point the robot is GAP from it on x, so a ring of GAP - 2 always clears it.
+local function ringRadius(p: Point, spot: Spot, area: Area, d: Dims): number?
+  local r = math.floor(math.min(M.RIPPLE_RADIUS * d.scale, M.GAP - 2, p.x, p.y, area.width - p.x, area.height - p.y))
+  if r < M.RIPPLE_MIN then
+    return nil
+  end
+  local left = if spot.side == "left" then spot.x - d.wide else spot.x
+  local right = if spot.side == "left" then spot.x + d.robot else spot.x + d.robot + d.wide
+  local top, bottom = spot.y - d.room, spot.y + d.robot
+  local apart = p.x + r + 1 < left or p.x - r - 1 > right or p.y + r + 1 < top or p.y - r - 1 > bottom
+  return if apart then r else nil
+end
+
+-- A click's ring at `nowMs`, growing and fading in RIPPLE_STEPS steps from `fromMs`, and
+-- when it changes next.
+local function ringAt(p: Point, r: number, fromMs: number, nowMs: number): (Ring?, number?)
+  if nowMs < fromMs then
+    return nil, fromMs
+  end
+  local stepMs = M.RIPPLE_MS / M.RIPPLE_STEPS
+  local i = (nowMs - fromMs) // stepMs
+  if i >= M.RIPPLE_STEPS then
+    return nil, nil
+  end
+  local t = i / (M.RIPPLE_STEPS - 1)
+  local radius = math.floor(M.RIPPLE_MIN + (r - M.RIPPLE_MIN) * t + 0.5)
+  local ring = {
+    x = math.floor(p.x + 0.5) - radius,
+    y = math.floor(p.y + 0.5) - radius,
+    size = 2 * radius,
+    opacity = 1 - 0.8 * t,
+  }
+  return ring, fromMs + (i + 1) * stepMs
 end
 
 local HIDDEN: Frame = {
@@ -546,6 +646,8 @@ local HIDDEN: Frame = {
   role = "primary",
   width = 0,
   size = M.MEDIUM,
+  lift = 0,
+  ring = nil,
   side = "left",
   opacity = 0,
   moving = false,
@@ -572,9 +674,15 @@ function M.step(st: Stage, view: any, nowMs: number, env: Env): Frame
   move(st, spot, if found.drag then from else nil, found.still, nowMs)
   local x, y, gliding = position(st, nowMs)
   local popping = st.popMs ~= nil and nowMs < st.popMs + M.POP_MS
+  local readying = gliding and nowMs < st.startMs
   local pose = found.pose
   if gliding and not found.drag then
-    pose = if (st.at :: Spot).x < (st.from :: Spot).x then "lean-l" else "lean-r"
+    local leftward = (st.at :: Spot).x < (st.from :: Spot).x
+    if readying then
+      pose = if leftward then "ready-l" else "ready-r"
+    else
+      pose = if leftward then "lean-l" else "lean-r"
+    end
   end
   -- The caption never moves: it shows once the robot has arrived.
   local caption = if gliding then nil else found.caption
@@ -584,11 +692,23 @@ function M.step(st: Stage, view: any, nowMs: number, env: Env): Frame
     x -= (d.inner + width) * env.scale
   end
   local nextMs = found.nextMs
+  local ring = nil
+  if found.ring and not gliding then
+    local r = ringRadius(found.ring.point, st.at :: Spot, areaOf(view, env, spot.output), d)
+    if r then
+      local ringMs
+      ring, ringMs = ringAt(found.ring.point, r, found.ring.fromMs, nowMs)
+      nextMs = soonest(nextMs, ringMs)
+    end
+  end
   -- An update interval rather than frame ticks drives a pop-in or a glide: Noctalia
   -- sends a frame tick only after a redraw, and a frame that changes nothing draws
-  -- nothing, which ended the ticks halfway through a glide.
+  -- nothing, which ended the ticks halfway through a glide. Getting ready changes
+  -- nothing until the glide starts.
   local moving = gliding or popping
-  if moving then
+  if readying then
+    nextMs = st.startMs
+  elseif moving then
     nextMs = nowMs + M.FRAME_MS
   end
   if nextMs and nextMs <= nowMs then
@@ -604,6 +724,8 @@ function M.step(st: Stage, view: any, nowMs: number, env: Env): Frame
     role = found.role,
     width = width,
     size = env.size,
+    lift = if pose == "tap" then d.lift else 0,
+    ring = ring,
     side = side,
     opacity = if popping then math.floor((nowMs - (st.popMs :: number)) / M.POP_MS * 4) / 4 else 1,
     moving = moving,
@@ -618,7 +740,29 @@ function M.key(frame: Frame): string
   if not frame.visible then
     return "hidden"
   end
-  return `{frame.x},{frame.y}|{frame.pose}|{frame.caption or ""}|{frame.role}|{frame.side}|{frame.width}|{frame.size}|{frame.opacity}`
+  local ring = frame.ring
+  local drawn = if ring then `{ring.x},{ring.y},{ring.size},{ring.opacity}` else ""
+  return `{frame.x},{frame.y}|{frame.pose}|{frame.caption or ""}|{frame.role}|{frame.side}|{frame.width}|{frame.size}|{frame.lift}|{drawn}|{frame.opacity}`
+end
+
+-- A box to draw, in logical pixels: the robot with its room to hop and its caption
+-- (`group`), or a click's ring.
+export type Placed = { key: string, x: number, y: number, width: number, height: number }
+
+-- What `frame` draws, and the axis that keeps the boxes apart: the tree places boxes
+-- side by side along it, since nothing in Noctalia's tree can overlap.
+function M.layout(frame: Frame, d: Dims): ({ Placed }, string)
+  local captioned = if frame.caption then (d.inner + frame.width) * d.scale else 0
+  local group = { key = "group", x = frame.x, y = frame.y - d.room, width = d.robot + captioned, height = d.robot + d.room }
+  local ring = frame.ring
+  if ring == nil then
+    return { group }, "x"
+  end
+  local box = { key = "ring", x = ring.x, y = ring.y, width = ring.size, height = ring.size }
+  if box.x >= group.x + group.width or box.x + box.width <= group.x then
+    return if box.x < group.x then { box, group } else { group, box }, "x"
+  end
+  return if box.y < group.y then { box, group } else { group, box }, "y"
 end
 
 return M
