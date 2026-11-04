@@ -14,18 +14,22 @@
 //! than the plugin's largest robot at Noctalia's largest UI scale. Anything else, or no
 //! file, compares every pixel, as without the plugin.
 //!
-//! Only `read` does I/O, and it never waits: see there. Parsing, mapping and the
-//! comparison (`ppm::changed_outside`) are pure.
+//! Only `load` does I/O, on a thread of its own that `Reader` waits for at most `WAIT`,
+//! so a runtime directory on a filesystem that stalls can't stop the server. Parsing,
+//! mapping and the comparison (`ppm::changed_outside`) are pure.
 
 use std::io::Read as _;
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::{Duration, SystemTime};
 
 use niri_ipc::Transform;
 use rustix::fs::{FileType, Mode, OFlags};
 use serde::Deserialize;
 
 use crate::coords::{ImagePx, ImageRect, OutputLocalRect};
-use crate::observe::{Metadata, Rect};
+use crate::observe::{self, Metadata, Rect};
 
 /// The area's file in the runtime directory.
 pub(crate) const FILE: &str = "overlay.json";
@@ -69,11 +73,76 @@ struct Bounds {
     height: f64,
 }
 
-/// The area published at `path`, as at `now_ms` in Unix milliseconds. The file is opened
-/// without following a symlink and without waiting for a writer, so a FIFO or a link put
-/// there returns at once, and only a regular file, of at most `LIMIT` bytes, is read: the
-/// runtime directory is a tmpfs, where that read doesn't wait either.
-pub(crate) fn read(path: &Path, now_ms: u64) -> Option<Area> {
+/// How long a settle sample waits for the area: a read from a tmpfs takes microseconds.
+const WAIT: Duration = Duration::from_millis(50);
+
+/// What reads the file: `load`, or a stand-in in tests.
+type Load = Arc<dyn Fn(&Path) -> Option<Vec<u8>> + Send + Sync>;
+
+/// Reads the area for settle samples, each read on a thread of its own, at most one at a
+/// time. A read still running when another sample asks, or one that takes longer than
+/// `WAIT`, gives no area, and the sample is compared whole; the thread ends when the read
+/// does.
+pub(crate) struct Reader {
+    path: PathBuf,
+    busy: Arc<AtomicBool>,
+    load: Load,
+}
+
+impl std::fmt::Debug for Reader {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Reader")
+            .field("path", &self.path)
+            .field("busy", &self.busy)
+            .finish_non_exhaustive()
+    }
+}
+
+impl Reader {
+    pub(crate) fn new(path: PathBuf) -> Self {
+        Self::with(path, Arc::new(load))
+    }
+
+    fn with(path: PathBuf, load: Load) -> Self {
+        Self {
+            path,
+            busy: Arc::default(),
+            load,
+        }
+    }
+
+    /// The area published now, if one could be read within `WAIT`.
+    pub(crate) async fn read(&self) -> Option<Area> {
+        if self.busy.swap(true, Ordering::AcqRel) {
+            return None;
+        }
+        let (sent, received) = tokio::sync::oneshot::channel();
+        let (path, busy, load) = (
+            self.path.clone(),
+            Arc::clone(&self.busy),
+            Arc::clone(&self.load),
+        );
+        let spawned = std::thread::Builder::new()
+            .name("overlay-area".to_owned())
+            .spawn(move || {
+                let bytes = load(&path);
+                busy.store(false, Ordering::Release);
+                // The sample may have stopped waiting.
+                drop(sent.send(bytes));
+            });
+        if spawned.is_err() {
+            self.busy.store(false, Ordering::Release);
+            return None;
+        }
+        let bytes = tokio::time::timeout(WAIT, received).await.ok()?.ok()??;
+        parse(&bytes, observe::unix_ms(SystemTime::now()))
+    }
+}
+
+/// The file at `path`, opened without following a symlink and without waiting for a
+/// writer, so a FIFO or a link put there returns at once, and read only when it is a
+/// regular file of at most `LIMIT` bytes.
+fn load(path: &Path) -> Option<Vec<u8>> {
     let flags = OFlags::RDONLY | OFlags::NOFOLLOW | OFlags::NONBLOCK | OFlags::CLOEXEC;
     let fd = rustix::fs::open(path, flags, Mode::empty()).ok()?;
     let stat = rustix::fs::fstat(&fd).ok()?;
@@ -85,10 +154,7 @@ pub(crate) fn read(path: &Path, now_ms: u64) -> Option<Area> {
         .take(LIMIT + 1)
         .read_to_end(&mut bytes)
         .ok()?;
-    if u64::try_from(bytes.len()).ok()? > LIMIT {
-        return None;
-    }
-    parse(&bytes, now_ms)
+    (u64::try_from(bytes.len()).ok()? <= LIMIT).then_some(bytes)
 }
 
 /// The area `bytes` publish, as at `now_ms`, or `None` for a file that doesn't count.
@@ -394,6 +460,43 @@ mod tests {
         assert_eq!((widest.ceil(), tallest.ceil()), (MAX_WIDTH, MAX_HEIGHT));
     }
 
+    // The bug: a read that stalls, as on a FUSE filesystem, stops the server's one thread,
+    // and with it every deadline and every other call.
+    #[tokio::test]
+    async fn a_stalled_read_gives_no_area_at_once_and_starts_no_second_read() {
+        let now = observe::unix_ms(SystemTime::now());
+        let good = file("DP-1", [10.0, 20.0, 120.0, 70.0], now).into_bytes();
+        let (release, stalled) = std::sync::mpsc::channel::<()>();
+        let stalled = std::sync::Mutex::new(Some(stalled));
+        let reads = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let counted = Arc::clone(&reads);
+        let reader = Reader::with(
+            PathBuf::from("/stalls"),
+            Arc::new(move |_: &Path| {
+                // The first read waits until the test lets it go.
+                let first = (counted.fetch_add(1, Ordering::SeqCst) == 0)
+                    .then(|| stalled.lock().unwrap().take())
+                    .flatten();
+                first.map(|first| first.recv());
+                Some(good.clone())
+            }),
+        );
+        let start = Instant::now();
+        assert_eq!(reader.read().await, None, "stalled");
+        assert!(start.elapsed() < Duration::from_secs(1));
+        assert_eq!(reader.read().await, None, "still stalled");
+        assert_eq!(reads.load(Ordering::SeqCst), 1, "one read at a time");
+        release.send(()).unwrap();
+        let mut read = None;
+        let mut tries = 0;
+        while read.is_none() && tries < 100 {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+            read = reader.read().await;
+            tries += 1;
+        }
+        assert!(read.is_some(), "reads again once the stalled read ended");
+    }
+
     // The bug: a FIFO or a link to one in the runtime directory hangs every settle.
     #[test]
     fn reads_only_a_small_regular_file_and_returns_at_once_otherwise() {
@@ -401,20 +504,20 @@ mod tests {
         let path = dir.join(FILE);
         let good = file("DP-1", [10.0, 20.0, 120.0, 70.0], NOW);
         std::fs::write(&path, &good).unwrap();
-        assert!(read(&path, NOW).is_some());
+        assert!(load(&path).and_then(|bytes| parse(&bytes, NOW)).is_some());
         let link = dir.join("link");
         std::os::unix::fs::symlink(&path, &link).unwrap();
-        assert_eq!(read(&link, NOW), None, "a symlink to a good file");
+        assert_eq!(load(&link), None, "a symlink to a good file");
         std::fs::write(&path, format!("{good}{}", " ".repeat(1024))).unwrap();
-        assert_eq!(read(&path, NOW), None, "oversized");
+        assert_eq!(load(&path), None, "oversized");
         std::fs::write(&path, &good).unwrap();
         std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o000)).unwrap();
         // Root reads it anyway; everyone else can't.
         if std::fs::read(&path).is_err() {
-            assert_eq!(read(&path, NOW), None, "unreadable");
+            assert_eq!(load(&path), None, "unreadable");
         }
         std::fs::remove_file(&path).unwrap();
-        assert_eq!(read(&path, NOW), None, "missing");
+        assert_eq!(load(&path), None, "missing");
         let fifo = dir.join("fifo");
         rustix::fs::mknodat(
             rustix::fs::CWD,
@@ -429,7 +532,7 @@ mod tests {
         std::fs::create_dir(dir.join("dir")).unwrap();
         let start = Instant::now();
         for special in [fifo, fifo_link, dir.join("dir")] {
-            assert_eq!(read(&special, NOW), None, "{}", special.display());
+            assert_eq!(load(&special), None, "{}", special.display());
         }
         assert!(start.elapsed() < Duration::from_secs(1));
     }
