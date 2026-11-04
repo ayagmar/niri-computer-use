@@ -251,9 +251,11 @@ fn clicks_pass_through(session: &mut Session<'_>, client: &mut Client) -> Result
     let layout = super::multi::move_to(session, "org.ncu.Activation", "headless-1")?;
     let (x, y) = surface_origin(&output, &layout)?;
     let (width, height) = layout.window_size;
-    // Low and right on the button, so the robot lands above-left of it, still on the button.
+    // Low and right on the 320-wide button, so the robot lands above-left of it, still on
+    // the button: above-left needs room for the widest caption, 207 pixels, the robot and
+    // the gap to its left, 287 pixels in all at a UI scale of 1.
     let first = (
-        f64::from(width).mul_add(0.75, x),
+        f64::from(width).mul_add(0.92, x),
         f64::from(height).mul_add(0.75, y),
     );
     let before = Shot::through(session, client, "output:headless-1", 4000)?;
