@@ -2212,3 +2212,17 @@ A field report had `type_text` keep only the first digit in a React form's amoun
 - With a `watch` that sends no `live` lines (an older server), the robot stays in the bottom-right corner and shows each acting call's caption from its `action` line once the call has ended, until the session's first `live` line.
 - Requires plugin API 36, which Noctalia 5.4.0 brought (`[[layer]]` entries and `noctalia.layer`). Noctalia 5.3 accepts at most API 34 and refuses the whole plugin, not only the overlay; Noctalia has no way to make an entry optional, and `noctalia.state` is per plugin, so a second plugin couldn't read the service's state. Noctalia 5.4.0 was tagged on 2026-10-26, under the seven days AGENTS.md asks for; requiring it is the owner's explicit exception, granted on 2026-10-30, and the overlay can ship in the next release. The install script reads `noctalia msg plugins list` after linking and says when Noctalia lists the plugin as incompatible.
 - The glides' smoothness isn't measured: niri's headless backend, which the nested case runs on, sends frame callbacks only from its fallback timer, about once a second, so the layer draws there about once a second. It is a desk check, with the art and a recording.
+
+## 2026-11-04: dependency updates
+
+Dependabot's five merged updates (#57, #58, #59, #61, #62), checked against the version rule on 2026-11-04, so each is a release published on or before 2026-10-28.
+
+| Package or action | From | To | Published | Note |
+|---|---|---|---|---|
+| `rmcp` | 3.7.0 | 3.8.0 | 2026-10-26 | `rmcp-macros` moves with it. |
+| `rustix` | 1.1.5 | 1.1.6 | 2026-10-27 | `tempfile` now takes `getrandom` 0.4.3, which `Cargo.lock` already held. |
+| `tokio` | 1.53.3 | 1.54.1 | 2026-10-21 | |
+| `@astrojs/starlight` (site) | 0.42.5 | 0.42.7 | 2026-10-23 | |
+| `taiki-e/install-action` | v2.87.31 | v2.88.0 | 2026-10-28 | `86f7a0ffb25f40114606501a311ebcfaf882ea32`, in `ci.yml` and `release.yml`. Dependabot proposed v2.87.32 (2026-10-26); v2.88.0 is the newest at least 7 days old (v2.88.1 is from 2026-10-30). It only adds `similarity-rs`. |
+
+The action's commit is the one its tag names in the action's repository (`git ls-remote`; the tag isn't annotated, so there is nothing to peel). No new crate entered `Cargo.lock`. zbus 6 (#60) stays out: it is a migration of its own.

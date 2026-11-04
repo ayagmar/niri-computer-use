@@ -215,21 +215,21 @@ cat <<EOF
      Other clients: https://ayagmar.github.io/niri-computer-use/start/clients/
   2. Bind the stop key inside the binds block of your niri config:
        Mod+Shift+Escape allow-inhibiting=false allow-when-locked=true hotkey-overlay-title="Stop the AI agent (niri-computer-use)" { spawn "${binary}" "stop"; }
-  4. To let the agent start apps installed for the whole system by their desktop entry
+  3. To let the agent start apps installed for the whole system by their desktop entry
      id, such as org.gnome.Nautilus, add this line to ${policy}:
        launch_desktop_entries = true
 EOF
-check=3
+step=4
 if [ "${linked_plugin}" = yes ]; then
 	cat <<EOF
-  3. See which agent drives your desktop in Noctalia's bar: enable the plugin, then add
+  ${step}. See which agent drives your desktop in Noctalia's bar: enable the plugin, then add
      its widget to a bar and its glow to the desktop in Noctalia's settings:
        noctalia msg plugins enable ayagmar/niri-computer-use
 EOF
-	check=4
+	step=5
 fi
 cat <<EOF
-  ${check}. Check it from a shell inside your niri session; every line should be a ✓:
+  ${step}. Check it from a shell inside your niri session; every line should be a ✓:
        "${binary}" status --check
 EOF
 

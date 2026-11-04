@@ -899,6 +899,34 @@ mod script {
         assert!(!stdout.contains(INCOMPATIBLE), "{stdout}");
     }
 
+    /// The numbers of the lines that start a "Next:" step, in the order they print.
+    fn step_numbers(stdout: &str) -> Vec<u32> {
+        stdout
+            .lines()
+            .skip_while(|line| *line != "Next:")
+            .filter_map(|line| line.strip_prefix("  ")?.split_once(". ")?.0.parse().ok())
+            .collect()
+    }
+
+    // The bug: the steps printed as 1, 2, 4, 3 with the plugin linked, and the check was
+    // numbered 3 or 4 whatever came before it.
+    #[tokio::test]
+    async fn the_next_steps_are_numbered_in_the_order_they_print() {
+        let release = Release::new("steps", "x86_64");
+        release.publish(LATEST, "x86_64", None);
+
+        let without = release
+            .install(&[("PATH", &release.path_without("noctalia"))])
+            .await;
+        release.fake("noctalia", "exit 0\n");
+        let with = release.install(&[]).await;
+
+        let without = String::from_utf8(without.stdout).unwrap();
+        let with = String::from_utf8(with.stdout).unwrap();
+        assert_eq!(step_numbers(&without), [1, 2, 3, 4], "{without}");
+        assert_eq!(step_numbers(&with), [1, 2, 3, 4, 5], "{with}");
+    }
+
     const INCOMPATIBLE: &str = "it needs Noctalia 5.4 or newer";
 
     // The bug: an install on Noctalia 5.3, which refuses the plugin's API, that said to

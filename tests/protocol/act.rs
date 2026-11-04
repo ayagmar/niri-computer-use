@@ -2164,6 +2164,40 @@ async fn release_desktop_can_give_focus_back_to_the_users_window() {
     assert!(!desk.niri.sent_action());
 }
 
+/// The user's window kept focus all along: nothing is sent, as for `focus`, and `restored`
+/// says the window is focused with `accepted: false`, which is not a failure.
+#[tokio::test]
+async fn release_desktop_reports_a_users_window_that_already_has_focus_as_focused() {
+    let mut desk = Desk::start("act-restore-focused", "").await;
+    let release = |restore: bool| json!({ "restore_focus": restore });
+    desk.server
+        .structured_with("release_desktop", release(false))
+        .await;
+    let focused = tokio::time::timeout(Duration::from_secs(5), async {
+        while desk.server.structured("desktop_state").await["focused_window"] != 1 {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await;
+    assert!(focused.is_ok(), "window 1 never had focus");
+    let acquired = desk.server.structured("acquire_desktop").await;
+    assert_eq!(acquired["users_window"], 1, "{acquired}");
+
+    let released = desk
+        .server
+        .structured_with("release_desktop", release(true))
+        .await;
+
+    assert_eq!(
+        released,
+        json!({
+            "users_window": 1, "released": true,
+            "restored": {"accepted": false, "observed": "focused", "focused_window": 1, "windows": [1]}
+        })
+    );
+    assert!(!desk.niri.sent_action());
+}
+
 /// A user who pressed the stop key wants the desktop back at once: the stop took the lease
 /// and forgot the user's window with it, so giving focus back is skipped without reading
 /// anything, and nothing is sent.
@@ -2224,8 +2258,11 @@ async fn a_client_that_goes_mid_action_frees_the_lease_at_once() {
     );
     let went = Instant::now();
     desk.server.stop().await;
+    // An action left running would hold the lease until the settle's 1.5 s limit
+    // (`settle::LIMIT`) drops grim. Process exit alone took 671 ms on a loaded aarch64
+    // runner, so the bound sits at 1 s: clear of that and under the limit.
     assert!(
-        went.elapsed() < Duration::from_millis(500),
+        went.elapsed() < Duration::from_secs(1),
         "{:?}",
         went.elapsed()
     );
