@@ -49,7 +49,7 @@ While an agent holds or asks for the desktop, the robot stands on a layer above 
 
 The captions use the same words as the panel: the tool, a count of characters or keys, key names only for shortcuts and keys such as Enter, and the `app_id` niri reports for the window. They never show typed text, window titles or clipboard contents.
 
-The robot takes your theme's colours: its body, lines, chest light and stop sign follow the surface, text, accent and error colours, and its caption the accent colour. The plugin writes the recoloured frames to its data directory once per theme, and a theme change shows from the next time an agent takes the desktop. The tip of its antenna stays blue.
+The robot takes your theme's colours: its body, lines, chest light and stop sign follow the surface, text, accent and error colours, and its caption the accent colour. The plugin writes the recoloured frames to its data directory once per theme, and removes a theme's frames once no robot used them for a week; a theme change shows from the next time an agent takes the desktop. The tip of its antenna stays blue.
 
 The robot is in the agent's screenshots, as any window is. To keep it out of them and off your screen, turn off the overlay setting. With a niri-computer-use whose `watch` sends no `live` lines, the robot stands in the bottom-right corner and names each call once it has ended.
 

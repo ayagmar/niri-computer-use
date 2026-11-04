@@ -11,6 +11,8 @@ local art = require("./lib/art.luau")
 local stage = require("./lib/stage.luau")
 
 local ENTRY = "robot"
+-- Names this instance's files: the area file's writer, and its temporary files.
+local incarnation = math.floor(noctalia.nowMs())
 
 local view = noctalia.state.get("live")
 local st = stage.new()
@@ -21,7 +23,6 @@ local published = nil
 -- The last write failed: the robot doesn't think until one works.
 local unwritable = false
 local REFRESH_MS = 2000
-local incarnation = math.floor(noctalia.nowMs())
 -- The output this instance is on. `layer.outputName()` is nil in a state watcher.
 local here = layer.outputName()
 
@@ -41,10 +42,37 @@ local function size(): number
   return if type(named) == "string" and stage.SIZES[named] then stage.SIZES[named] else stage.MEDIUM
 end
 
--- The frame of each pose in the theme's colours: written once per palette into the
--- plugin's data directory, through a file of this instance's own, and every other file
--- there removed: other palettes' frames, and files an instance left half written. The
--- frames as drawn when a colour or a write is missing.
+-- Painted frames are kept per palette, in `<plugin data>/robot/<palette>/`. Another
+-- Noctalia session may draw another palette's set from the same directory, so a set is
+-- removed only once no instance used it for GC_S, by its `used` stamp, which each
+-- instance renews when it is older than USED_S, and another writer's temporary file only
+-- once it is TMP_S old. Directories stay: Noctalia can't remove one.
+local GC_S = 7 * 86400
+local USED_S = 3600
+local TMP_S = 3600
+
+local function older(path: string, ageS: number, nowS: number): boolean
+  local info = noctalia.fileInfo(path)
+  return info ~= nil and not info.isDir and nowS - info.mtime > ageS
+end
+
+-- Removes the sets no instance used for GC_S, and temporary files TMP_S old.
+local function collect(root: string, key: string, nowS: number)
+  for _, name in noctalia.listDir(root) or {} do
+    local dir = `{root}/{name}`
+    local unused = name ~= key and older(`{dir}/used`, GC_S, nowS)
+    for _, file in noctalia.listDir(dir) or {} do
+      local path = `{dir}/{file}`
+      if unused or (file:match("%.tmp$") and older(path, TMP_S, nowS)) then
+        noctalia.removeFile(path)
+      end
+    end
+  end
+end
+
+-- The frame of each pose in the theme's colours, each written once per palette through a
+-- file of this instance's own and a rename, or the frames as drawn when a colour or a
+-- write is missing.
 local function themed(): { [string]: string }
   local bundled = {}
   for _, pose in stage.POSES do
@@ -55,15 +83,16 @@ local function themed(): { [string]: string }
   if palette == nil or data == nil then
     return bundled
   end
-  local dir = `{data}/robot`
+  local root = `{data}/robot`
+  local key = art.key(palette)
+  local dir = `{root}/{key}`
   if not noctalia.mkdirAll(dir) then
     return bundled
   end
-  local key = art.key(palette)
-  local mine = `.{noctalia.nowMs()}.tmp`
+  local mine = `.{incarnation}.tmp`
   local paths = {}
   for _, pose in stage.POSES do
-    local path = `{dir}/{pose}-{key}.svg`
+    local path = `{dir}/{pose}.svg`
     if not noctalia.fileExists(path) then
       local template = noctalia.readFile(bundled[pose])
       local written = template ~= nil
@@ -76,12 +105,12 @@ local function themed(): { [string]: string }
     end
     paths[pose] = path
   end
-  local kept = `-{key}.svg`
-  for _, name in noctalia.listDir(dir) or {} do
-    if name:sub(-#kept) ~= kept then
-      noctalia.removeFile(`{dir}/{name}`)
-    end
+  local nowS = noctalia.nowMs() / 1000
+  local used = `{dir}/used`
+  if not noctalia.fileExists(used) or older(used, USED_S, nowS) then
+    noctalia.writeFile(used, tostring(math.floor(nowS)))
   end
+  collect(root, key, nowS)
   return paths
 end
 

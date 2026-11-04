@@ -69,6 +69,8 @@ function M.new(sources)
     failWrites = false,
     -- Each rename and removal, with how many renders the layer had drawn by then.
     fileOps = {},
+    -- When each file was last written, in seconds, as fileInfo() gives it.
+    mtimes = {},
   }
 
   local function tr(key: string, vars)
@@ -136,6 +138,7 @@ function M.new(sources)
         return false, "cannot open file for writing"
       end
       host.files[path] = data
+      host.mtimes[path] = host.nowMs / 1000
       host.writes += 1
       return true
     end,
@@ -144,6 +147,7 @@ function M.new(sources)
         return false, "no such file"
       end
       host.files[to], host.files[from] = host.files[from], nil
+      host.mtimes[to], host.mtimes[from] = host.mtimes[from], nil
       table.insert(host.fileOps, { op = "rename", path = to, renders = host.layer.renders })
       return true
     end,
@@ -166,8 +170,22 @@ function M.new(sources)
           table.insert(out, name)
         end
       end
+      for sub in host.dirs do
+        local dir, name = sub:match("^(.*)/([^/]*)$")
+        if dir == path then
+          table.insert(out, name)
+        end
+      end
       table.sort(out)
       return out
+    end,
+    fileInfo = function(path)
+      if host.dirs[path] then
+        return { size = 0, mtime = 0, isDir = true }
+      elseif host.files[path] == nil then
+        return nil, "no such path"
+      end
+      return { size = #host.files[path], mtime = host.mtimes[path] or 0, isDir = false }
     end,
     focusedOutputName = function()
       return host.focusedOutput

@@ -721,21 +721,51 @@ t.group("robot", function()
     end
   end)
 
-  t.test("another palette writes its own frames and removes the last one's", function()
+  local function drawn(host)
+    local out = {}
+    for _, image in images(host.layer.tree) do
+      table.insert(out, image.props.path)
+    end
+    return out
+  end
+
+  -- The bug: one Noctalia session starting with another palette removed the frames
+  -- another session had just put in its tree, before it loaded them, so its robot drew
+  -- nothing; and a half-written file another instance was about to rename.
+  t.test("another palette writes its own set and keeps the last one's, which another session may draw", function()
     local host = overlay()
-    local before = images(host.layer.tree)[1].props.path
-    host.files["/data/plugin/robot/idle-old.svg.17.tmp"] = "half"
+    local first = drawn(host)
+    local dir = first[1]:match("^(.*)/[^/]*$")
+    host.files[dir .. "/idle.svg.17.tmp"] = "half"
+    host.mtimes[dir .. "/idle.svg.17.tmp"] = host.nowMs / 1000
     host.colors.primary = "#9ECE6A"
     env.start(host, "robot.luau")
-    local after = images(host.layer.tree)[1].props.path
-    t.ok(after ~= before, "new files")
-    t.eq(host.files[before], nil, "the old palette's frame is gone")
-    t.eq(host.files["/data/plugin/robot/idle-old.svg.17.tmp"], nil, "and a half-written file")
-    local count = 0
-    for _ in host.files do
-      count += 1
+    local second = drawn(host)
+    t.ok(second[1]:match("^(.*)/[^/]*$") ~= dir, "a set of its own")
+    for _, path in first do
+      t.ok(host.files[path] ~= nil, `{path} is kept for the other session`)
     end
-    t.eq(count, #stage.POSES)
+    t.ok(host.files[dir .. "/idle.svg.17.tmp"] ~= nil, "and another writer's fresh file")
+  end)
+
+  t.test("a set no instance used for a week is removed, and a temporary file an hour old", function()
+    local host = overlay()
+    local first = drawn(host)
+    host.nowMs += 8 * 86400 * 1000
+    host.colors.primary = "#9ECE6A"
+    env.start(host, "robot.luau")
+    local dir = drawn(host)[1]:match("^(.*)/[^/]*$")
+    for _, path in first do
+      t.eq(host.files[path], nil, `{path} is gone`)
+    end
+    host.files[dir .. "/idle.svg.1.tmp"], host.mtimes[dir .. "/idle.svg.1.tmp"] = "old", host.nowMs / 1000 - 7200
+    host.files[dir .. "/idle.svg.2.tmp"], host.mtimes[dir .. "/idle.svg.2.tmp"] = "new", host.nowMs / 1000 - 60
+    env.start(host, "robot.luau")
+    t.eq(host.files[dir .. "/idle.svg.1.tmp"], nil, "an hour-old temporary file is gone")
+    t.ok(host.files[dir .. "/idle.svg.2.tmp"] ~= nil, "a fresh one stays")
+    for _, path in drawn(host) do
+      t.ok(host.files[path] ~= nil, `{path} is drawn and kept`)
+    end
   end)
 
   t.test("draws the frames as they are when the theme can't be written", function()
