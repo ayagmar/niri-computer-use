@@ -11,6 +11,11 @@
 //! larger. Measuring from the run's first sample lets a slow drift add up where steps
 //! between samples would each pass. Where grim gives no raw pixels, the samples are the
 //! JPEGs the result returns, compared by their bytes, as before.
+//!
+//! The pixels the Noctalia plugin's robot may change while it thinks in place
+//! (`overlay_area`) are left out when both samples were taken alike and read the same
+//! area, and the part changed is taken of the pixels compared. A JPEG sample can't leave
+//! anything out.
 
 use std::time::Duration;
 
@@ -18,6 +23,7 @@ use tokio::time::Instant;
 
 use crate::error::{CallError, ErrorName, ToolError};
 use crate::observe::Screenshot;
+use crate::overlay_area::{self, Area, Geometry};
 use crate::ppm;
 
 /// A first redraw after input usually lands within a few frames.
@@ -146,17 +152,31 @@ fn no_sample() -> ToolError {
 /// would return, where grim gave no raw pixels.
 #[derive(Debug)]
 pub(crate) enum Sample {
-    Pixels(Vec<u8>),
+    Pixels(Pixels),
     Image(Box<Screenshot>),
 }
 
+/// A capture's raw pixels, where it was taken, and the robot's area as read right after it.
+#[derive(Debug)]
+pub(crate) struct Pixels {
+    pub(crate) image: Vec<u8>,
+    pub(crate) geometry: Geometry,
+    pub(crate) overlay: Option<Area>,
+}
+
 /// What part of the pixels changed from `a` to `b`: counted for two samples of raw pixels
-/// of one size, 0 for two JPEGs with the same bytes, and unknown otherwise.
+/// of one size, outside the robot's area when both have the same one, 0 for two JPEGs
+/// with the same bytes, and unknown otherwise.
 pub(crate) fn compare(a: &Sample, b: &Sample) -> Option<f64> {
     match (a, b) {
         (Sample::Pixels(a), Sample::Pixels(b)) => {
-            let (a, b) = (ppm::parse(a)?, ppm::parse(b)?);
-            Some(fraction(ppm::changed(&a, &b)?, ppm::pixels(&a)))
+            let (first, next) = (ppm::parse(&a.image)?, ppm::parse(&b.image)?);
+            let mask = (a.overlay == b.overlay && a.geometry == b.geometry)
+                .then_some(b.overlay.as_ref())
+                .flatten()
+                .and_then(|area| overlay_area::mask(area, &b.geometry, next.width, next.height));
+            let (changed, compared) = ppm::changed_outside(&first, &next, mask)?;
+            Some(fraction(changed, compared))
         }
         (Sample::Image(a), Sample::Image(b)) => (a.image == b.image).then_some(0.0),
         (Sample::Pixels(_), Sample::Image(_)) | (Sample::Image(_), Sample::Pixels(_)) => None,
@@ -442,11 +462,102 @@ mod tests {
     }
 
     fn pixels(width: u32, changed: &[usize]) -> Sample {
-        let mut pixels = vec![0; usize::try_from(width).unwrap() * 3];
+        Sample::Pixels(grid(width, 1, changed, None))
+    }
+
+    /// A `width` x `height` capture of the whole of DP-1 at (0, 0), at scale 1, with
+    /// `changed` pixels lit, counted row by row, and the robot's `overlay` read after it.
+    fn grid(width: u32, height: u32, changed: &[usize], overlay: Option<[f64; 4]>) -> Pixels {
+        let mut pixels = vec![0; usize::try_from(width * height).unwrap() * 3];
         for &pixel in changed {
             pixels[pixel * 3] = 255;
         }
-        Sample::Pixels([format!("P6\n{width} 1\n255\n").as_bytes(), &pixels].concat())
+        let geometry = Geometry {
+            output: "DP-1".to_owned(),
+            transform: Transform::Normal,
+            output_origin: (0, 0),
+            captured: Rect {
+                x: 0,
+                y: 0,
+                width,
+                height,
+            },
+            scale: 1.0,
+        };
+        let overlay = overlay.map(|[x, y, w, h]| Area {
+            output: "DP-1".to_owned(),
+            rect: crate::coords::OutputLocalRect {
+                x,
+                y,
+                width: w,
+                height: h,
+            },
+        });
+        Pixels {
+            image: [format!("P6\n{width} {height}\n255\n").as_bytes(), &pixels].concat(),
+            geometry,
+            overlay,
+        }
+    }
+
+    /// Two 10x10 samples, with `changed` pixels lit in the second, both reading `overlay`:
+    /// the part of the pixels that changed.
+    fn masked(changed: &[usize], overlay: Option<[f64; 4]>) -> Option<f64> {
+        let before = Sample::Pixels(grid(10, 10, &[], overlay));
+        compare(&before, &Sample::Pixels(grid(10, 10, changed, overlay)))
+    }
+
+    // The bug: the robot thinking beside the last target keeps every settle from ending,
+    // or, masked wrongly, hides a change the agent waits for.
+    #[test]
+    fn leaves_out_the_robots_area_only_when_both_samples_share_it() {
+        // The robot's area covers columns 2..5 of rows 2..5, 9 of the 100 pixels.
+        let robot = Some([2.0, 2.0, 3.0, 3.0]);
+        let inside = [23, 34, 44];
+        assert_eq!(masked(&inside, robot), Some(0.0));
+        // Outside it, the part changed is of the 91 pixels compared.
+        assert_eq!(masked(&[0, 23], robot), Some(1.0 / 91.0));
+        // Without the area in one sample, or another area, every pixel counts.
+        let before = Sample::Pixels(grid(10, 10, &[], robot));
+        let unmasked = |after: Pixels| compare(&before, &Sample::Pixels(after));
+        assert_eq!(unmasked(grid(10, 10, &inside, None)), Some(0.03));
+        let moved = Some([3.0, 2.0, 3.0, 3.0]);
+        assert_eq!(unmasked(grid(10, 10, &inside, moved)), Some(0.03));
+        let first = Sample::Pixels(grid(10, 10, &[], None));
+        assert_eq!(
+            compare(&first, &Sample::Pixels(grid(10, 10, &inside, robot))),
+            Some(0.03)
+        );
+        // Captured elsewhere between samples of the same size: focus moved to another
+        // output, or the output turned or was scaled, or a region moved.
+        let changes: [fn(&mut Geometry); 4] = [
+            |at| at.output = "HDMI-A-1".to_owned(),
+            |at| at.transform = Transform::_90,
+            |at| at.scale = 0.5,
+            |at| at.captured.x = 1,
+        ];
+        for change in changes {
+            let mut after = grid(10, 10, &inside, robot);
+            change(&mut after.geometry);
+            assert_eq!(unmasked(after), Some(0.03));
+        }
+    }
+
+    // The bug: a mask over the whole image compares nothing and calls the screen still,
+    // or divides by zero and never settles.
+    #[test]
+    fn a_mask_that_leaves_nothing_to_compare_is_ignored() {
+        assert_eq!(masked(&[0, 99], Some([0.0, 0.0, 10.0, 10.0])), Some(0.02));
+        let beyond = Some([-5.0, -5.0, 20.0, 20.0]);
+        assert_eq!(
+            masked(&[0], beyond),
+            Some(0.01),
+            "clipped to the whole image"
+        );
+        // All but the last column: that one pixel-wide border is all that is compared.
+        assert_eq!(masked(&[0, 9], Some([0.0, 0.0, 9.0, 10.0])), Some(0.1));
+        let away = Some([20.0, 20.0, 5.0, 5.0]);
+        assert_eq!(masked(&[0], away), Some(0.01), "outside the image");
     }
 
     fn shot(image: &[u8]) -> Screenshot {

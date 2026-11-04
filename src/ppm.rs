@@ -2,6 +2,8 @@
 //! pixels as raw RGB, three bytes each (pure). The settle wait compares two captures pixel
 //! by pixel with them, without decoding anything.
 
+use crate::coords::{ImagePx, ImageRect};
+
 /// A P6 image: its size, and its pixels, row by row.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct Pixmap<'a> {
@@ -62,12 +64,81 @@ pub(crate) fn changed(a: &Pixmap<'_>, b: &Pixmap<'_>) -> Option<u64> {
     if (a.width, a.height) != (b.width, b.height) {
         return None;
     }
-    let blocks = a.pixels.chunks(BLOCK).zip(b.pixels.chunks(BLOCK));
-    let differing = blocks.filter(|(x, y)| x != y).map(|(x, y)| {
-        let pixels = x.as_chunks::<3>().0.iter().zip(y.as_chunks::<3>().0);
-        pixels.filter(|(p, q)| p != q).count()
+    u64::try_from(differing(a.pixels, b.pixels)).ok()
+}
+
+/// How many pixels outside `mask` differ between `a` and `b`, and how many were compared,
+/// or `None` when their sizes differ. A mask that leaves no pixel to compare, or covers
+/// none, is ignored: every pixel is compared.
+pub(crate) fn changed_outside(
+    a: &Pixmap<'_>,
+    b: &Pixmap<'_>,
+    mask: Option<ImageRect>,
+) -> Option<(u64, u64)> {
+    let all = pixels(a);
+    let Some((mask, left)) = mask.and_then(|mask| kept(a, mask)) else {
+        return Some((changed(a, b)?, all));
+    };
+    if (a.width, a.height) != (b.width, b.height) {
+        return None;
+    }
+    let row = usize::try_from(a.width).ok()?.checked_mul(3)?;
+    let (start, end) = (to_bytes(mask.left)?, to_bytes(mask.right)?);
+    let (top, bottom) = (
+        usize::try_from(mask.top).ok()?,
+        usize::try_from(mask.bottom).ok()?,
+    );
+    let rows = a.pixels.chunks(row).zip(b.pixels.chunks(row)).enumerate();
+    let count = rows.map(|(y, (p, q))| {
+        if (top..bottom).contains(&y) {
+            let before = differing(p.get(..start)?, q.get(..start)?);
+            Some(before + differing(p.get(end..)?, q.get(end..)?))
+        } else {
+            Some(differing(p, q))
+        }
     });
-    u64::try_from(differing.sum::<usize>()).ok()
+    Some((u64::try_from(count.sum::<Option<usize>>()?).ok()?, left))
+}
+
+/// The columns `left..right` of rows `top..bottom` a mask covers.
+struct Span {
+    left: u32,
+    top: u32,
+    right: u32,
+    bottom: u32,
+}
+
+/// The part of `image` that `mask` covers, and how many pixels it leaves, unless that is
+/// none or all of them.
+fn kept(image: &Pixmap<'_>, mask: ImageRect) -> Option<(Span, u64)> {
+    let ImagePx { x, y } = mask.origin;
+    let span = Span {
+        left: x.min(image.width),
+        top: y.min(image.height),
+        right: x.saturating_add(mask.width).min(image.width),
+        bottom: y.saturating_add(mask.height).min(image.height),
+    };
+    let width = span.right - span.left;
+    let height = span.bottom - span.top;
+    let covered = u64::from(width) * u64::from(height);
+    let left = pixels(image) - covered;
+    (covered > 0 && left > 0).then_some((span, left))
+}
+
+fn to_bytes(column: u32) -> Option<usize> {
+    usize::try_from(column).ok()?.checked_mul(3)
+}
+
+/// How many three-byte pixels differ between `a` and `b`, of the same length.
+fn differing(a: &[u8], b: &[u8]) -> usize {
+    let blocks = a.chunks(BLOCK).zip(b.chunks(BLOCK));
+    blocks
+        .filter(|(x, y)| x != y)
+        .map(|(x, y)| {
+            let pixels = x.as_chunks::<3>().0.iter().zip(y.as_chunks::<3>().0);
+            pixels.filter(|(p, q)| p != q).count()
+        })
+        .sum()
 }
 
 /// The pixels of an image as a count, for fractions of it.

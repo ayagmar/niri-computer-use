@@ -15,6 +15,7 @@ All notable changes to this project are documented here. The format follows [Kee
 - The overlay's robot is 56 pixels tall by default instead of 32, redrawn for that size, with a 13-point caption.
 - The overlay's robot takes the Noctalia theme's colours instead of fixed light grey ones.
 - The overlay's robot stands 16 pixels from a click instead of 12, which leaves room for the ring.
+- Settled screenshots and `wait_for screen_stable` leave out the rectangle the Noctalia plugin's overlay publishes in `overlay.json`, which `watch`'s `hello` names as `overlay`, so the robot thinking in place doesn't keep them waiting.
 
 ## 0.1.7 - 2026-10-30
 

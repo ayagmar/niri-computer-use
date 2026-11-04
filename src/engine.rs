@@ -10,6 +10,7 @@ pub(crate) mod host;
 use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
+use std::time::SystemTime;
 
 use serde::Serialize;
 use serde_json::Value;
@@ -32,6 +33,7 @@ use crate::niri::OutputSummary;
 use crate::niri::events::{DesktopState, EventStream, StreamState};
 use crate::notice::Notices;
 use crate::observe;
+use crate::overlay_area;
 use crate::policy::{self, SaveTarget};
 use crate::refs::Shot;
 use crate::session::{Label, Session, SessionId, Settings};
@@ -49,6 +51,8 @@ pub(crate) struct Engine {
     desk: Desk,
     /// The record of the action in progress, for the overlay.
     live: Live,
+    /// Where the overlay publishes the robot's area, none without a runtime directory.
+    overlay: Option<std::path::PathBuf>,
     /// Whether there is an accessibility bus, decided once at startup for the same reason.
     accessibility: Presence,
     /// The accessibility bus, when there is one.
@@ -238,14 +242,13 @@ impl Engine {
             .clone()
             .map(|address| A11y::new(address, session_bus));
         let desk = Desk::start(&env);
-        let live = Live::new(
-            desk.runtime()
-                .ok()
-                .map(|runtime| runtime.path().join(live::FILE)),
-        );
+        let runtime = desk.runtime().ok().map(|runtime| runtime.path().to_owned());
+        let live = Live::new(runtime.as_ref().map(|dir| dir.join(live::FILE)));
+        let overlay = runtime.map(|dir| dir.join(overlay_area::FILE));
         Self {
             desk,
             live,
+            overlay,
             env,
             events,
             audit,
@@ -928,6 +931,12 @@ impl Engine {
         shot
     }
 
+    /// The rectangle the overlay publishes now, if any (`overlay_area::read`).
+    fn overlay_area(&self) -> Option<overlay_area::Area> {
+        let path = self.overlay.as_deref()?;
+        overlay_area::read(path, observe::unix_ms(SystemTime::now()))
+    }
+
     /// One sample of a settle wait: the focused output's raw pixels, never kept as a ref,
     /// or, once a raw capture failed in this wait (`encoded`), as with a grim that can't
     /// write PPM or an output too large for it, the JPEG, as the latest of `frames`. A
@@ -940,7 +949,15 @@ impl Engine {
     ) -> Result<settle::Sample, CallError> {
         if !encoded.load(Ordering::Relaxed) {
             match self.take(session, observe::Request::focused_pixels()).await {
-                Ok((shot, _)) => return Ok(settle::Sample::Pixels(shot.image)),
+                Ok((shot, _)) => {
+                    // Read after the capture: the plugin removes the area before the robot
+                    // leaves it, so an area still there was there for the whole capture.
+                    return Ok(settle::Sample::Pixels(settle::Pixels {
+                        geometry: (&shot.metadata).into(),
+                        image: shot.image,
+                        overlay: self.overlay_area(),
+                    }));
+                }
                 Err(_) => encoded.store(true, Ordering::Relaxed),
             }
         }
