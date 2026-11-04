@@ -56,9 +56,18 @@ local function carried(model)
   }, " | ")
 end
 
--- Feeds `lines` to a fresh model of `lib` under the fixtures' lease.
+-- `hello` as the last release's `watch` sends it, and as this one does, naming the file
+-- where the overlay publishes its area.
+local OLD_HELLO = { event = "hello", format = 1, version = "0.1.7", instance = "niri.sock" }
+local NEW_HELLO = fx.with(OLD_HELLO, {
+  version = "0.1.8",
+  overlay = "/run/user/1000/niri-computer-use/niri.sock/overlay.json",
+})
+
+-- Feeds `lines` to a fresh model of `lib` under the fixtures' lease, after an old `hello`.
 local function fold(lib, lines)
   local model = lib.new()
+  lib.feed(model, OLD_HELLO, T - 1100)
   lib.feed(model, fx.state(), T - 1000)
   for i, line in lines do
     lib.feed(model, line, T + i * 10)
@@ -67,7 +76,8 @@ local function fold(lib, lines)
 end
 
 -- Every delivered sequence that keeps the last record: each subset of the earlier ones,
--- with a `watch` restart (`hello`) or a line neither version knows before the last.
+-- after either `hello`, with a `watch` restart (either `hello`) or a line neither version
+-- knows before the last.
 local function deliveries(records)
   local out = {}
   local earlier = #records - 1
@@ -78,23 +88,28 @@ local function deliveries(records)
         table.insert(kept, records[i])
       end
     end
-    for _, extra in { "none", "hello", "unknown" } do
-      local lines = table.clone(kept)
-      if extra == "hello" then
-        table.insert(lines, { event = "hello", format = 1 })
-      elseif extra == "unknown" then
-        table.insert(lines, { event = "later", pid = 1 })
+    for _, first in { OLD_HELLO, NEW_HELLO } do
+      for _, extra in { "none", "hello", "new hello", "unknown" } do
+        local lines = { first }
+        table.move(kept, 1, #kept, 2, lines)
+        if extra == "hello" then
+          table.insert(lines, OLD_HELLO)
+        elseif extra == "new hello" then
+          table.insert(lines, NEW_HELLO)
+        elseif extra == "unknown" then
+          table.insert(lines, { event = "later", pid = 1 })
+        end
+        table.insert(lines, records[#records])
+        table.insert(out, { lines = lines, label = `{first.version} hello, subset {mask}, {extra}` })
       end
-      table.insert(lines, records[#records])
-      table.insert(out, { lines = lines, label = `subset {mask}, {extra}` })
     end
   end
   return out
 end
 
 t.group(`compat with {TAG}`, function()
-  -- The bug: a change to the fold that a coalesced read, or a line the last release
-  -- doesn't know, sends one version somewhere the other doesn't go.
+  -- The bug: a change to the fold that a coalesced read, a line the last release doesn't
+  -- know, or this release's `hello` sends one version somewhere the other doesn't go.
   t.test("both versions agree on what an action's last record carries, however it was delivered", function()
     for name, records in ACTIONS do
       local whole = carried(fold(current, records))
