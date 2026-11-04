@@ -2223,6 +2223,6 @@ Dependabot's five merged updates (#57, #58, #59, #61, #62), checked against the 
 | `rustix` | 1.1.5 | 1.1.6 | 2026-10-27 | `tempfile` now takes `getrandom` 0.4.3, which `Cargo.lock` already held. |
 | `tokio` | 1.53.3 | 1.54.1 | 2026-10-21 | |
 | `@astrojs/starlight` (site) | 0.42.5 | 0.42.7 | 2026-10-23 | |
-| `taiki-e/install-action` | v2.87.31 | v2.87.32 | 2026-10-26 | `5488ac5a951645ce95062214902ac4b6bc1a1037`, in `ci.yml` and `release.yml`. v2.87.33 (2026-10-28) is also old enough; a later bump can take it. |
+| `taiki-e/install-action` | v2.87.31 | v2.87.33 | 2026-10-28 | `645d1ab48b3cb8591684a8b730b2ccf4cb3f9568`, in `ci.yml` and `release.yml`. Dependabot proposed v2.87.32 (2026-10-26); v2.87.33 is the newest at least 7 days old. |
 
 The action's commit is the one its tag names in the action's repository (`git ls-remote`; the tag isn't annotated, so there is nothing to peel). No new crate entered `Cargo.lock`. zbus 6 (#60) stays out: it is a migration of its own.
