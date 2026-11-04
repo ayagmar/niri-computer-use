@@ -2164,6 +2164,36 @@ async fn release_desktop_can_give_focus_back_to_the_users_window() {
     assert!(!desk.niri.sent_action());
 }
 
+/// The user's window kept focus all along: nothing is sent, as for `focus`, and `restored`
+/// says the window is focused with `accepted: false`, which is not a failure.
+#[tokio::test]
+async fn release_desktop_reports_a_users_window_that_already_has_focus_as_focused() {
+    let mut desk = Desk::start("act-restore-focused", "").await;
+    let release = |restore: bool| json!({ "restore_focus": restore });
+    desk.server
+        .structured_with("release_desktop", release(false))
+        .await;
+    while desk.server.structured("desktop_state").await["focused_window"] != 1 {
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    let acquired = desk.server.structured("acquire_desktop").await;
+    assert_eq!(acquired["users_window"], 1, "{acquired}");
+
+    let released = desk
+        .server
+        .structured_with("release_desktop", release(true))
+        .await;
+
+    assert_eq!(
+        released,
+        json!({
+            "users_window": 1, "released": true,
+            "restored": {"accepted": false, "observed": "focused", "focused_window": 1, "windows": [1]}
+        })
+    );
+    assert!(!desk.niri.sent_action());
+}
+
 /// A user who pressed the stop key wants the desktop back at once: the stop took the lease
 /// and forgot the user's window with it, so giving focus back is skipped without reading
 /// anything, and nothing is sent.

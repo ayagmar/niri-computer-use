@@ -89,7 +89,7 @@ If neither a preset nor a desktop entry fits the app the user wants, look at `st
 
 ## Giving the desktop back
 
-`acquire_desktop` returns `users_window`, the window the user was on. When you are done, and before you ask the user anything, close any shell panel you opened and call `release_desktop` with `restore_focus: true`: focus goes back to that window, and `restored` says how it went. Pass false only when the task was to leave another window in front; a window your clicks or keys focused on the way doesn't count. The user is often away from the screen while you work and comes back to whatever you left focused.
+`acquire_desktop` returns `users_window`, the window the user was on. When you are done, and before you ask the user anything, close any shell panel you opened and call `release_desktop` with `restore_focus: true`: focus goes back to that window, and `restored` says how it went: `observed: focused` is success, also with `accepted: false`, which here means the window already had focus and nothing was sent. Pass false only when the task was to leave another window in front; a window your clicks or keys focused on the way doesn't count. The user is often away from the screen while you work and comes back to whatever you left focused.
 
 ## Examples
 
