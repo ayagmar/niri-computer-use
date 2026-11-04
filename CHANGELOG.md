@@ -12,6 +12,7 @@ All notable changes to this project are documented here. The format follows [Kee
 
 - tokio 1.54.1, rmcp 3.8.0 and rustix 1.1.6, and the site moves to Starlight 0.42.7.
 - The overlay's robot is 56 pixels tall by default instead of 32, redrawn for that size, with a 13-point caption.
+- The overlay's robot takes the Noctalia theme's colours instead of fixed light grey ones.
 
 ## 0.1.7 - 2026-10-30
 

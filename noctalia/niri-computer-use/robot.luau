@@ -4,6 +4,7 @@
 -- decides from the `live` state the service publishes. The layer covers the output
 -- and the robot is placed inside it; a target on another output moves the layer there.
 
+local art = require("./lib/art.luau")
 local stage = require("./lib/stage.luau")
 
 local ENTRY = "robot"
@@ -31,6 +32,52 @@ local function size(): number
   return if type(named) == "string" and stage.SIZES[named] then stage.SIZES[named] else stage.MEDIUM
 end
 
+-- The frame of each pose in the theme's colours: written once per palette into the
+-- plugin's data directory, through a file of this instance's own, and every other file
+-- there removed: other palettes' frames, and files an instance left half written. The
+-- frames as drawn when a colour or a write is missing.
+local function themed(): { [string]: string }
+  local bundled = {}
+  for _, pose in stage.POSES do
+    bundled[pose] = `robot/{pose}.svg`
+  end
+  local palette = art.palette(noctalia.getColor)
+  local data = noctalia.pluginDataDir()
+  if palette == nil or data == nil then
+    return bundled
+  end
+  local dir = `{data}/robot`
+  if not noctalia.mkdirAll(dir) then
+    return bundled
+  end
+  local key = art.key(palette)
+  local mine = `.{noctalia.nowMs()}.tmp`
+  local paths = {}
+  for _, pose in stage.POSES do
+    local path = `{dir}/{pose}-{key}.svg`
+    if not noctalia.fileExists(path) then
+      local template = noctalia.readFile(bundled[pose])
+      local written = template ~= nil
+        and noctalia.writeFile(path .. mine, art.paint(template, palette))
+        and noctalia.renameFile(path .. mine, path)
+      if not written then
+        noctalia.removeFile(path .. mine)
+        return bundled
+      end
+    end
+    paths[pose] = path
+  end
+  local kept = `-{key}.svg`
+  for _, name in noctalia.listDir(dir) or {} do
+    if name:sub(-#kept) ~= kept then
+      noctalia.removeFile(`{dir}/{name}`)
+    end
+  end
+  return paths
+end
+
+local frames = themed()
+
 local function tree(frame, scale: number)
   local d = stage.dims(frame.size, scale)
   local sprite = {}
@@ -38,7 +85,7 @@ local function tree(frame, scale: number)
   for _, pose in stage.POSES do
     table.insert(sprite, ui.image({
       key = pose,
-      path = `robot/{pose}.svg`,
+      path = frames[pose],
       width = d.size,
       height = d.size,
       visible = pose == frame.pose,

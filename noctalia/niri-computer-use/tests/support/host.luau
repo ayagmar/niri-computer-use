@@ -53,6 +53,20 @@ function M.new(sources)
     layerCalls = {},
     -- The layer instance a layer entry runs as.
     layer = { output = "DP-1", tree = nil, renders = 0 },
+    -- The theme's palette, as getColor() reads it.
+    colors = {
+      primary = "#7AA2F7",
+      error = "#F7768E",
+      on_surface = "#C0CAF5",
+      surface_container_highest = "#292E42",
+    },
+    -- A filesystem for the plugin's data directory: files by absolute path, the
+    -- directories that exist, and how many writes it took. Noctalia creates the data
+    -- directory itself; writeFile creates no parent.
+    files = {},
+    dirs = { ["/data/plugin"] = true },
+    writes = 0,
+    failWrites = false,
   }
 
   local function tr(key: string, vars)
@@ -90,6 +104,66 @@ function M.new(sources)
     end,
     getSetting = function(path)
       return host.settings[path]
+    end,
+    getColor = function(role)
+      return host.colors[role]
+    end,
+    pluginDataDir = function()
+      return "/data/plugin"
+    end,
+    mkdirAll = function(path)
+      local at = ""
+      for part in path:gmatch("[^/]+") do
+        at ..= "/" .. part
+        host.dirs[at] = true
+      end
+      return true
+    end,
+    fileExists = function(path)
+      return host.files[path] ~= nil or host.dirs[path] == true
+    end,
+    -- A relative path is in the plugin's directory, as in Noctalia.
+    readFile = function(path)
+      if path:sub(1, 1) ~= "/" then
+        return sources[path]
+      end
+      return host.files[path]
+    end,
+    writeFile = function(path, data)
+      if host.failWrites or not host.dirs[path:match("^(.*)/[^/]*$")] then
+        return false, "cannot open file for writing"
+      end
+      host.files[path] = data
+      host.writes += 1
+      return true
+    end,
+    renameFile = function(from, to)
+      if host.files[from] == nil then
+        return false, "no such file"
+      end
+      host.files[to], host.files[from] = host.files[from], nil
+      return true
+    end,
+    removeFile = function(path)
+      if host.files[path] == nil then
+        return false, "no such file"
+      end
+      host.files[path] = nil
+      return true
+    end,
+    listDir = function(path)
+      if not host.dirs[path] then
+        return nil, "not a directory"
+      end
+      local out = {}
+      for file in host.files do
+        local dir, name = file:match("^(.*)/([^/]*)$")
+        if dir == path then
+          table.insert(out, name)
+        end
+      end
+      table.sort(out)
+      return out
     end,
     focusedOutputName = function()
       return host.focusedOutput

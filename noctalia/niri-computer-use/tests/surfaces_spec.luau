@@ -529,7 +529,7 @@ t.group("robot", function()
     t.eq(#frames, #stage.POSES)
     local shown = {}
     for _, image in frames do
-      t.ok(env.sources[image.props.path] ~= nil, `{image.props.path} is in the plugin`)
+      t.ok(host.files[image.props.path] ~= nil, `{image.props.path} is written`)
       if image.props.visible then
         table.insert(shown, image.props.path)
       end
@@ -657,6 +657,63 @@ t.group("robot", function()
       t.ok(svg ~= nil, `{pose} is in the plugin`)
       t.ok(svg:find('<circle cx="28" cy="5" r="3.4" fill="#4c8dff" stroke="none"/>', 1, true) ~= nil, `{pose}: the tip`)
       t.ok(svg:find('viewBox="0 0 56 56"', 1, true) ~= nil, `{pose}: drawn at 56`)
+    end
+  end)
+
+  -- The bug: frames written into a directory that doesn't exist yet, as on a fresh
+  -- install, so every write failed and the robot never took the theme's colours.
+  t.test("draws the frames in the theme's colours, written once per palette", function()
+    local host = overlay()
+    local paths = {}
+    for _, image in images(host.layer.tree) do
+      paths[image.props.path] = true
+      t.ok(image.props.path:find("^/data/plugin/robot/") ~= nil, image.props.path)
+      local svg = host.files[image.props.path]
+      t.ok(svg:find("#292e42", 1, true) and svg:find("#c0caf5", 1, true), `{image.props.path}: the theme's colours`)
+      t.eq(svg:find("#e8e8ec", 1, true), nil, `{image.props.path}: no template body`)
+    end
+    local writes = host.writes
+    env.start(host, "robot.luau")
+    t.eq(host.writes, writes, "a second instance writes nothing")
+    for _, image in images(host.layer.tree) do
+      t.ok(paths[image.props.path], "and draws the same files")
+    end
+  end)
+
+  t.test("another palette writes its own frames and removes the last one's", function()
+    local host = overlay()
+    local before = images(host.layer.tree)[1].props.path
+    host.files["/data/plugin/robot/idle-old.svg.17.tmp"] = "half"
+    host.colors.primary = "#9ECE6A"
+    env.start(host, "robot.luau")
+    local after = images(host.layer.tree)[1].props.path
+    t.ok(after ~= before, "new files")
+    t.eq(host.files[before], nil, "the old palette's frame is gone")
+    t.eq(host.files["/data/plugin/robot/idle-old.svg.17.tmp"], nil, "and a half-written file")
+    local count = 0
+    for _ in host.files do
+      count += 1
+    end
+    t.eq(count, #stage.POSES)
+  end)
+
+  t.test("draws the frames as they are when the theme can't be written", function()
+    for _, broken in { "write", "colour" } do
+      local host = env.host()
+      if broken == "write" then
+        host.failWrites = true
+      else
+        host.colors.primary = nil
+      end
+      host.outputs = { { name = "DP-1", width = 1280, height = 720, scale = 1, focused = true } }
+      env.start(host, "service.luau")
+      env.start(host, "robot.luau")
+      host.event({ event = "hello", format = 1 })
+      host.event(fx.state())
+      for _, image in images(host.layer.tree) do
+        t.ok(env.sources[image.props.path] ~= nil, `{broken}: {image.props.path} is in the plugin`)
+      end
+      t.eq(next(host.files), nil, `{broken}: nothing left behind`)
     end
   end)
 

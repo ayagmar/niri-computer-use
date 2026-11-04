@@ -8,6 +8,8 @@ local time = env.module("lib/time.luau")
 local command = env.module("lib/command.luau")
 local feed = env.module("lib/feed.luau")
 local agentGroups = env.module("lib/agents.luau")
+local art = env.module("lib/art.luau")
+local stage = env.module("lib/stage.luau")
 local tr = host.globals.noctalia.tr
 
 local NOW = 1_790_000_000_000
@@ -505,6 +507,58 @@ t.group("command", function()
     local run = command.run("stop", "")
     t.ok(run:find('niri-computer-use "$HOME/.local/bin/niri-computer-use" "$HOME/.cargo/bin/niri-computer-use"', 1, true), run)
     t.ok(run:find(`echo '\{"event":"missing"}'; exit 127`, 1, true), run)
+  end)
+end)
+
+
+t.group("art", function()
+  -- The bug: a frame drawn with a colour of its own, which no theme changes, such as a
+  -- black outline that vanishes on a dark theme.
+  t.test("every frame uses only colours the palette maps, and the antenna's", function()
+    for _, pose in stage.POSES do
+      local stray = art.stray(env.sources[`robot/{pose}.svg`])
+      t.eq(table.concat(stray, " "), "", `{pose}: colours outside the palette`)
+    end
+  end)
+
+  t.test("paints each template colour in its role's colour and leaves the antenna", function()
+    local roles = {
+      surface_container_highest = "#101014",
+      on_surface = "#F0F0F0",
+      primary = "#123456",
+      error = "#AA0000",
+    }
+    local palette = art.palette(function(role)
+      return roles[role]
+    end)
+    local painted = art.paint(env.sources["robot/stop.svg"], palette)
+    for _, template in { "#e8e8ec", "#2a2a33", "#e5484d" } do
+      t.eq(painted:find(template, 1, true), nil, `{template} replaced`)
+    end
+    for _, colour in { "#101014", "#f0f0f0", "#aa0000", "#4c8dff" } do
+      t.ok(painted:find(colour, 1, true), `{colour} drawn`)
+    end
+    t.eq(art.key(palette), "101014f0f0f0123456aa0000")
+  end)
+
+  -- The bug: a theme whose primary colour is the antenna's, so the nested overlay case
+  -- found the chest light as part of the antenna and the robot's place was off.
+  t.test("a palette colour equal to the antenna's is moved off it", function()
+    local palette = art.palette(function(role)
+      return if role == "primary" then "#4C8DFF" else "#202020"
+    end)
+    local painted = art.paint(env.sources["robot/idle.svg"], palette)
+    local _, antennas = painted:gsub("#4c8dff", "")
+    t.eq(antennas, 1, "only the antenna's tip")
+  end)
+
+  t.test("no palette when a role has no colour or not a #rrggbb one", function()
+    t.eq(art.palette(function()
+      return nil
+    end), nil)
+    t.eq(art.palette(function()
+      return "blue"
+    end), nil)
   end)
 end)
 
