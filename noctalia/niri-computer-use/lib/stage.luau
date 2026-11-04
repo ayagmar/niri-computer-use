@@ -6,9 +6,11 @@
 --
 -- While the agent looks at the screen (a call's `look` phase, until its `end`), nothing
 -- the robot shows changes, so the robot never keeps the agent's own settle wait going.
--- Between actions it may think in place: it blinks, bobs in its room to hop, pulses its
--- antenna and shows a thought bubble, all inside the frame's `area`, which robot.luau
--- publishes and the server's settle waits leave out. Nothing else changes meanwhile.
+-- Wherever it stands still, every frame has the same `area`, which robot.luau publishes
+-- and the server's settle waits leave out: the robot, its room to hop, its caption's place
+-- at the widest caption and, beside a point, the largest ring. So a hop, a ring, a caption
+-- that changes or goes, and the robot thinking in place between actions (blinking,
+-- bobbing, pulsing its antenna and showing a thought bubble) change nothing outside it.
 
 local describe = require("./describe.luau")
 local live = require("./live.luau")
@@ -54,12 +56,12 @@ M.DOZE_MS = 8000
 M.BEAT_MS = 150
 M.THINK_MS = 60000
 local BOB = { 0, 1, 2, 1 }
--- The area is the robot, its room to hop and the bubble, this far around, in logical
--- pixels, for the rounding of the layer's tree.
+-- The area reaches this far past what it covers, in logical pixels, for the rounding of
+-- the layer's tree.
 M.AREA_PAD = 2
 -- The largest area the server leaves out, which tests/fixtures/overlay-areas.jsonl
--- shares with it. The robot doesn't think where its area would be larger.
-M.AREA_MAX = { width = 362, height = 197 }
+-- shares with it. A larger area isn't published, and the robot doesn't think without one.
+M.AREA_MAX = { width = 877, height = 227 }
 -- How long the robot stays beside its last target for an action without one.
 M.SPOT_MS = 30000
 
@@ -165,6 +167,8 @@ export type Stage = {
   popMs: number?,
   -- The frame last drawn, held while the agent looks at another output.
   last: Frame?,
+  -- The area published where the robot stands, kept while it stays there.
+  area: { spot: Spot, rect: Rect }?,
 }
 
 export type Frame = {
@@ -190,9 +194,10 @@ export type Frame = {
   moving: boolean,
   -- When the next change is due without a new record, if sooner than the usual tick.
   nextMs: number?,
-  -- Thinking: the thought bubble's lit dot, 1 to 3, in the caption's place, and the area
-  -- in the output's logical pixels that thinking changes.
+  -- Thinking: the thought bubble's lit dot, 1 to 3, in the caption's place.
   bubble: number?,
+  -- Standing still: what the robot may change where it stands, in the output's logical
+  -- pixels, the same for every frame there.
   area: Rect?,
 }
 
@@ -225,7 +230,7 @@ type Scene = {
 }
 
 function M.new(): Stage
-  return { at = nil, from = nil, startMs = 0, durationMs = 0, popMs = nil, last = nil }
+  return { at = nil, from = nil, startMs = 0, durationMs = 0, popMs = nil, last = nil, area = nil }
 end
 
 local function soonest(a: number?, b: number?): number?
@@ -515,9 +520,9 @@ local function openCall(view: any, nowMs: number): any
   return call
 end
 
--- The robot may think: the layer can publish its area, and `watch` named where, so every
+-- The robot may publish its area: the layer can write it, and `watch` named where, so every
 -- server on the instance is a build that leaves it out.
-local function canThink(view: any, env: Env): boolean
+local function canPublish(view: any, env: Env): boolean
   return env.think == true and type(view.overlay) == "string" and view.replaced ~= true
 end
 
@@ -529,7 +534,7 @@ local function held(view: any, nowMs: number, st: Stage, env: Env): Scene
   elseif not view.live then
     return legacy(view, nowMs, env)
   elseif call == nil then
-    return waiting(view, nowMs, if st.at then st.at.output else env.focused, canThink(view, env))
+    return waiting(view, nowMs, if st.at then st.at.output else env.focused, canPublish(view, env))
   end
   local target = callTarget(call, st, env)
   local caption = describe.doing(call.tool, call.args, call.app, env.tr)
@@ -538,7 +543,7 @@ local function held(view: any, nowMs: number, st: Stage, env: Env): Scene
   elseif nowMs < call.endMs + M.CAPTION_MS then
     return ended(call, target, caption, nowMs, env.tr)
   end
-  local scene = waiting(view, nowMs, target.output, canThink(view, env))
+  local scene = waiting(view, nowMs, target.output, canPublish(view, env))
   scene.target = target
   return scene
 end
@@ -671,6 +676,57 @@ local function ringAt(p: Point, r: number, fromMs: number, nowMs: number): (Ring
   return ring, fromMs + (i + 1) * stepMs
 end
 
+-- What the robot may change standing at `spot`, AREA_PAD around: itself, its room to
+-- hop and its caption's place at the widest caption, and the largest ring a click at
+-- each of `points` draws.
+function M.standArea(spot: Spot, points: { Point }, output: Area, d: Dims): Rect
+  local left = if spot.side == "left" then spot.x - d.wide else spot.x
+  local top = spot.y - d.room
+  local right, bottom = left + d.robot + d.wide, spot.y + d.robot
+  for _, p in points do
+    local r = ringRadius(p, spot, output, d)
+    if r then
+      local x, y = math.floor(p.x + 0.5), math.floor(p.y + 0.5)
+      left, top = math.min(left, x - r), math.min(top, y - r)
+      right, bottom = math.max(right, x + r), math.max(bottom, y + r)
+    end
+  end
+  local pad = M.AREA_PAD
+  return { x = left - pad, y = top - pad, width = right - left + 2 * pad, height = bottom - top + 2 * pad }
+end
+
+local function union(a: Rect, b: Rect): Rect
+  local x, y = math.min(a.x, b.x), math.min(a.y, b.y)
+  local right = math.max(a.x + a.width, b.x + b.width)
+  local bottom = math.max(a.y + a.height, b.y + b.height)
+  return { x = x, y = y, width = right - x, height = bottom - y }
+end
+
+local function sameSpot(a: Spot, b: Spot): boolean
+  return a.output == b.output and a.x == b.x and a.y == b.y and a.side == b.side
+end
+
+-- The area to publish where the robot stands: one that covers what it drew there since
+-- it arrived, so the area stays the same until it leaves, unless that grows past
+-- AREA_MAX. Nil when even this frame's doesn't fit.
+local function standing(st: Stage, found: Scene, output: Area, d: Dims): Rect?
+  local spot = st.at :: Spot
+  local points = {}
+  if found.target.kind == "point" then
+    table.insert(points, found.target.point)
+  end
+  if found.ring then
+    table.insert(points, found.ring.point)
+  end
+  local area = M.standArea(spot, points, output, d)
+  local kept = st.area
+  if kept and sameSpot(kept.spot, spot) and M.fits(union(kept.rect, area)) then
+    area = union(kept.rect, area)
+  end
+  st.area = if M.fits(area) then { spot = spot, rect = area } else nil
+  return if st.area then area else nil
+end
+
 local HIDDEN: Frame = {
   visible = false,
   output = nil,
@@ -693,7 +749,7 @@ local HIDDEN: Frame = {
 function M.step(st: Stage, view: any, nowMs: number, env: Env): Frame
   local found = scene(view, nowMs, st, env)
   if found == nil then
-    st.at, st.from, st.popMs, st.last = nil, nil, nil, nil
+    st.at, st.from, st.popMs, st.last, st.area = nil, nil, nil, nil, nil
     return table.clone(HIDDEN)
   end
   local d = M.dims(env.size, env.scale)
@@ -721,7 +777,13 @@ function M.step(st: Stage, view: any, nowMs: number, env: Env): Frame
     end
   end
   local nextMs = found.nextMs
-  local thinking = found.think == true and not gliding and not popping and M.fits(M.footprint(d))
+  local area = nil
+  if not gliding and canPublish(view, env) then
+    area = standing(st, found, areaOf(view, env, spot.output), d)
+  else
+    st.area = nil
+  end
+  local thinking = found.think == true and not popping and area ~= nil
   local bubble, bob = nil, 0
   if thinking then
     local beat = math.floor(nowMs / M.BEAT_MS)
@@ -776,11 +838,8 @@ function M.step(st: Stage, view: any, nowMs: number, env: Env): Frame
     moving = moving,
     nextMs = nextMs,
     bubble = bubble,
-    area = nil,
+    area = area,
   }
-  if thinking then
-    frame.area = M.area(frame, d)
-  end
   st.last = frame
   return frame
 end
@@ -815,32 +874,9 @@ function M.layout(frame: Frame, d: Dims): ({ Placed }, string)
   return if box.y < group.y then { box, group } else { group, box }, "y"
 end
 
--- The size of the area a thinking robot of `d` changes: the robot, its room to hop and
--- the bubble beside it, AREA_PAD around.
-function M.footprint(d: Dims): Area
-  return {
-    width = d.robot + (d.inner + d.captionMin) * d.scale + 2 * M.AREA_PAD,
-    height = d.robot + d.room + 2 * M.AREA_PAD,
-  }
-end
-
 -- Whether the server leaves out an area of `size`.
 function M.fits(size: Area): boolean
   return size.width <= M.AREA_MAX.width and size.height <= M.AREA_MAX.height
-end
-
--- The area a thinking `frame` changes, in its output's logical pixels: its group,
--- AREA_PAD around.
-function M.area(frame: Frame, d: Dims): Rect
-  local boxes = M.layout(frame, d)
-  local group = boxes[1]
-  for _, box in boxes do
-    if box.key == "group" then
-      group = box
-    end
-  end
-  local pad = M.AREA_PAD
-  return { x = group.x - pad, y = group.y - pad, width = group.width + 2 * pad, height = group.height + 2 * pad }
 end
 
 return M

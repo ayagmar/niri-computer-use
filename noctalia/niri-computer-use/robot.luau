@@ -3,9 +3,9 @@
 -- above windows that clicks and keys pass through. It draws what lib/stage.luau
 -- decides from the `live` state the service publishes. The layer covers the output
 -- and the robot is placed inside it; a target on another output moves the layer there.
--- While the robot thinks in place, the layer publishes the area it changes in the file
--- `watch`'s hello names, which the server's settle waits leave out: written before the
--- first frame that thinks, and removed before any frame that doesn't.
+-- While the robot stands still, the layer publishes the area it may change there in the
+-- file `watch`'s hello names, which the server's settle waits leave out: written before
+-- the first frame that has one, and removed before any frame that hasn't.
 
 local art = require("./lib/art.luau")
 local stage = require("./lib/stage.luau")

@@ -43,13 +43,13 @@ const FRESH_MS: u64 = 5000;
 /// read. A later one would keep counting long after the layer stopped.
 const SKEW_MS: u64 = 1000;
 /// The largest rectangle the plugin publishes, in logical pixels, rounded up: the 72-pixel
-/// robot, its 5-pixel room to hop, the gap and its 61-pixel thought bubble, 143 x 77 units
-/// at Noctalia's largest UI scale, 2.5, with 2 pixels around. A larger one isn't the
-/// robot. `noctalia/niri-computer-use/tests/fixtures/overlay-areas.jsonl` holds the
+/// robot at Noctalia's largest UI scale, 2.5, with its room to hop, the widest caption
+/// beside it and the largest ring a click next to it draws, 2 pixels around. A larger one
+/// isn't the robot. `noctalia/niri-computer-use/tests/fixtures/overlay-areas.jsonl` holds the
 /// plugin's rectangles for every size, UI scale and side, which the plugin's tests
 /// generate, and a test here requires each to fit and the largest to round up to these.
-pub(crate) const MAX_WIDTH: f64 = 362.0;
-pub(crate) const MAX_HEIGHT: f64 = 197.0;
+pub(crate) const MAX_WIDTH: f64 = 877.0;
+pub(crate) const MAX_HEIGHT: f64 = 227.0;
 
 /// The robot's area on one output.
 #[derive(Debug, Clone, PartialEq)]

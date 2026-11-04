@@ -537,6 +537,78 @@ t.group("stage", function()
       end
     end)
 
+    -- The bug: the hop, the ring, an error's caption or the caption going away drawn
+    -- outside the published area, or the area changing under them, so a settle wait
+    -- that starts as the action ends never sees two samples alike.
+    t.test("from the moment it arrives, one area covers the hop, the ring and the caption going", function()
+      local outcomes = {
+        { name = "accepted", outcome = { accepted = true } },
+        { name = "error", outcome = { accepted = nil, error = "focus_mismatch" } },
+      }
+      for _, setting in { { 72, 2.5 }, { 40, 0.5 }, { 56, 1 } } do
+        local size, scale = setting[1], setting[2]
+        local at = envAt(scale, size)
+        at.think = true
+        local d = stage.dims(size, scale)
+        for _, x in { 120, 1000, 1900 } do
+          for _, looked in { false, true } do
+            for _, ending in outcomes do
+              local label = `size {size} at {scale}, x {x}, look {looked}, {ending.name}`
+              local model, st = desk()
+              live.feed(model, { event = "hello", format = 1, overlay = OVERLAY }, T - 900)
+              live.feed(model, click(1, x, 320.4), T)
+              local arrived = T + stage.READY_MS + stage.GLIDE_MS
+              frame(model, st, T, at)
+              if looked then
+                live.feed(model, click(1, x, 320.4, "look"), arrived + 10)
+              end
+              local endMs = arrived + 50
+              live.feed(model, fx.with(click(1, x, 320.4, "end"), { outcome = ending.outcome }), endMs)
+              local first = frame(model, st, endMs, at)
+              t.ok(first.area ~= nil, label .. ": no area as the call ends")
+              local function rect(a)
+                return if a then `{a.x},{a.y},{a.width},{a.height}` else "none"
+              end
+              local captions, rings, hopped = {}, false, false
+              for nowMs = endMs, endMs + stage.CAPTION_MS + 3000, 100 do
+                local f = frame(model, st, nowMs, at)
+                t.eq(rect(f.area), rect(first.area), `{label} at {nowMs - endMs}: the area`)
+                for _, box in stage.layout(f, d) do
+                  t.ok(f.area and within(box, f.area), `{label} at {nowMs - endMs}: {box.key} outside the area`)
+                  rings = rings or box.key == "ring"
+                end
+                captions[f.caption or (if f.bubble then "bubble" else "none")] = true
+                hopped = hopped or f.lift > 0
+              end
+              t.ok(captions.bubble, label .. ": thinks once the caption is gone")
+              t.ok(hopped, label .. ": hops")
+              t.eq(rings, ending.name == "accepted", label .. ": rings only for an accepted click")
+            end
+          end
+        end
+      end
+    end)
+
+    -- The bug: a cap below what the robot can cover beside some click, so it publishes
+    -- nothing there and its hop and ring go uncovered.
+    t.test("beside a click anywhere at the largest size and UI scale, its area fits the cap", function()
+      local at = envAt(2.5, 72)
+      at.think = true
+      local widest, tallest = 0, 0
+      for x = 0, 2048, 64 do
+        for y = 0, 1152, 48 do
+          local model, st = desk()
+          live.feed(model, { event = "hello", format = 1, overlay = OVERLAY }, T - 900)
+          live.feed(model, fx.with(click(1, x, y, "end"), { outcome = { accepted = true } }), T)
+          frame(model, st, T, at)
+          local f = frame(model, st, T + 1000, at)
+          t.ok(f.area ~= nil, `click at {x},{y}: no area`)
+          widest, tallest = math.max(widest, f.area.width), math.max(tallest, f.area.height)
+        end
+      end
+      t.eq(`{math.ceil(widest)}x{math.ceil(tallest)}`, `{stage.AREA_MAX.width}x{stage.AREA_MAX.height}`, "the cap is the largest area")
+    end)
+
     -- The bug: thinking where the server compares the robot's pixels keeps every settle
     -- wait going for as long as it thinks.
     t.test("it doesn't think where the server wouldn't leave its area out or it can't publish it", function()
@@ -563,7 +635,7 @@ t.group("stage", function()
       live.feed(model, { event = "hello", format = 1, overlay = OVERLAY }, T - 900)
       live.feed(model, { event = "action", ts = "2026-10-30T12:00:00.400Z", session = fx.HOLDER, tool = "scroll", args = {} }, T)
       frame(model, st, T, THINK)
-      t.eq(frame(model, st, after, THINK).area, nil, "an older server's session")
+      t.eq(frame(model, st, after, THINK).bubble, nil, "an older server's session")
       -- Too large for the server: the largest robot past Noctalia's largest UI scale.
       local huge = envAt(3, 72)
       huge.think = true
@@ -571,35 +643,39 @@ t.group("stage", function()
       t.eq(frame(model, st, after, huge).area, nil, "an area the server would refuse")
     end)
 
-    t.test("it thinks only while no call runs, and stops before the robot moves", function()
+    t.test("it thinks only while no call runs, and stops publishing before the robot moves", function()
       local model, st = thinker()
-      t.eq(frame(model, st, T + 500, THINK).area, nil, "the call's caption shows")
+      local shown = frame(model, st, T + 500, THINK)
+      t.eq(shown.bubble, nil, "the call's caption shows")
       local thought = frame(model, st, T + stage.CAPTION_MS, THINK)
-      t.ok(thought.area ~= nil, "thinks once the caption is gone")
-      live.feed(model, click(2, 1200, 700, "start"), T + 4000)
-      t.eq(frame(model, st, T + 4000, THINK).area, nil, "a call starts")
+      t.ok(thought.bubble ~= nil, "thinks once the caption is gone")
+      t.eq(stage.key({ visible = true, x = thought.area.x, y = thought.area.y, pose = "", role = "", side = "", width = thought.area.width, size = thought.area.height, lift = 0, opacity = 0 }), stage.key({ visible = true, x = shown.area.x, y = shown.area.y, pose = "", role = "", side = "", width = shown.area.width, size = shown.area.height, lift = 0, opacity = 0 }), "the same area")
+      local start = click(2, 1200, 700, "start")
+      start.aim = nil
+      live.feed(model, start, T + 4000)
+      local started = frame(model, st, T + 4000, THINK)
+      t.ok(started.bubble == nil and started.area ~= nil, "a call starts where it stands")
       live.feed(model, click(2, 1200, 700), T + 4010)
       local f = frame(model, st, T + 4010, THINK)
       t.eq(f.area, nil, "gets ready to glide")
       t.eq(f.x, thought.x + (D.inner + D.captionMin), "where it stood, its bubble gone")
     end)
 
-    t.test("dozes after THINK_MS without a record, with nothing scheduled and no area", function()
+    t.test("dozes after THINK_MS without a record, with nothing scheduled", function()
       local model, st = thinker()
       t.ok(frame(model, st, T + stage.DOZE_MS, THINK).area ~= nil, "thinks past DOZE_MS")
       local f = frame(model, st, T + stage.THINK_MS, THINK)
       t.eq(f.pose, "doze")
-      t.eq(f.area, nil)
       t.eq(f.bubble, nil)
       t.eq(f.nextMs, nil)
     end)
 
-    t.test("a release while it thinks waves goodbye without an area, then it is gone", function()
+    t.test("a release while it thinks waves goodbye, then it is gone", function()
       local model, st = thinker()
-      t.ok(frame(model, st, T + 3000, THINK).area ~= nil)
+      t.ok(frame(model, st, T + 3000, THINK).bubble ~= nil)
       live.feed(model, fx.state(false), T + 3100)
       local bye = frame(model, st, T + 3100, THINK)
-      t.ok(bye.visible and bye.area == nil and bye.pose:match("^wave"), bye.pose)
+      t.ok(bye.visible and bye.bubble == nil and bye.pose:match("^wave"), bye.pose)
       t.eq(frame(model, st, T + 3100 + stage.GOODBYE_MS, THINK).visible, false)
     end)
 
@@ -690,20 +766,33 @@ t.group("stage", function()
         local view = live.view(model)
         local f = stage.step(st, view, nowMs, THINKING)
         local label = `seed {seed} at {nowMs - T}`
-        -- Thinking only between actions of a server that leaves its area out, and only
-        -- inside that area, which stays put while it thinks.
-        if f.area then
+        -- Thinking only between actions of a server that leaves its area out.
+        if f.bubble then
           local call = view.call
           local idle = call == nil or (call.phase == "end" and nowMs >= call.endMs + stage.CAPTION_MS) or nowMs - view.heardMs >= live.STALE_MS
-          t.ok(view.overlay and not view.replaced and view.live and not view.stopped and idle, label .. ": thinks during an action or unpublished")
-          for _, box in stage.layout(f, stage.dims(f.size, 1)) do
-            local a = f.area
-            t.ok(box.x >= a.x and box.y >= a.y and box.x + box.width <= a.x + a.width and box.y + box.height <= a.y + a.height, label .. `: {box.key} outside the area`)
-          end
-          if drawn and drawn.area then
+          -- A frame held while the agent looks at another output is the last one drawn.
+          local held = drawn ~= nil and stage.key(drawn) == stage.key(f) and f.area == nil
+          t.ok(held or (f.area and view.overlay and not view.replaced and view.live and not view.stopped and idle), label .. ": thinks during an action or unpublished")
+          if drawn and drawn.bubble then
             for _, key in { "output", "x", "y", "side", "width", "caption" } do
               t.eq(f[key], drawn[key], `{label}: {key} changed while it thought`)
             end
+          end
+        end
+        -- Everything a frame with an area draws is inside it, and the area stays the same
+        -- while the robot stands still, so whatever it changes there is left out.
+        if f.area then
+          -- Popping in happens where it stands; a glide doesn't.
+          local gliding = f.moving and f.opacity == 1
+          t.ok(view.overlay and not view.replaced and not gliding, label .. ": an area while gliding or unpublished")
+          local a = f.area
+          for _, box in stage.layout(f, stage.dims(f.size, 1)) do
+            t.ok(box.x >= a.x and box.y >= a.y and box.x + box.width <= a.x + a.width and box.y + box.height <= a.y + a.height, label .. `: {box.key} outside the area`)
+          end
+          local was = drawn and drawn.area
+          if was and drawn.output == f.output and not drawn.moving and drawn.visible then
+            local same = was.x == a.x and was.y == a.y and was.width == a.width and was.height == a.height
+            t.ok(same or drawn.x ~= f.x or drawn.y ~= f.y or drawn.side ~= f.side, label .. ": the area changed where the robot stood")
           end
         end
         local key = view.call and `{view.call.pid}/{view.call.call}`
