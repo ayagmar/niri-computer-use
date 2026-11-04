@@ -849,17 +849,13 @@ t.group("robot", function()
     local host, robot = overlay()
     host.dirs[AREA_DIR] = true
     host.event({ event = "hello", format = 1, overlay = AREA })
-    host.event(fx.with(F.click_aim, { phase = "end", outcome = { accepted = true } }))
-    -- It glides from home to the click, publishing nothing on the way.
-    t.eq(host.files[AREA], nil, "nothing published while it glides")
-    local before = #ops(host, "rename")
-    host.nowMs += 400
     local renders = host.layer.renders
-    robot.call("update")
+    -- An end alone, as a coalesced read gives it: the robot snaps from home to the click.
+    host.event(fx.with(F.click_aim, { phase = "end", outcome = { accepted = true } }))
     local written = ops(host, "rename")
-    t.eq(#written, before + 1, "published once it arrived")
-    t.eq(written[#written].renders, renders, "before the frame was drawn")
+    t.eq(written[#written].renders, renders, "published before the frame was drawn")
     t.ok(host.layer.renders > renders, "and the frame drawn")
+    local before = #written
     local area = host.globals.noctalia.json.decode(host.files[AREA])
     t.eq(area.output, "HDMI-A-1")
     t.ok(math.abs(area.ts - host.nowMs) < 1, "stamped now")
@@ -891,7 +887,7 @@ t.group("robot", function()
       t.eq(host.globals.noctalia.json.encode(now.rect), host.globals.noctalia.json.encode(area.rect), "the same area")
     end
     t.ok(thought, "thinks once the caption is gone")
-    t.eq(#ops(host, "rename"), before + 3, "written again every 2 s")
+    t.eq(#ops(host, "rename"), before + 2, "written again every 2 s")
     -- The next call starts where the robot stands, then aims elsewhere: removed before the
     -- frame that gets ready to glide.
     local start = fx.with(F.click_aim, { call = 2, phase = "start" })
@@ -959,6 +955,10 @@ t.group("robot", function()
     host.event(fx.state(false))
     t.ok(host.files[AREA] ~= nil, "nothing removed it yet")
     host.nowMs += 3000
+    host.service.call("update")
+    t.eq(host.files[AREA], nil)
+  end)
+
   -- The bug: disabling the plugin, reloading it, or unplugging the robot's output ended
   -- its runtime with no frame and no service start after, so the area stayed published
   -- with no robot on screen.
@@ -988,10 +988,6 @@ t.group("robot", function()
     host.files[AREA] = theirs
     host.exit("robot.luau", "reload")
     t.eq(host.files[AREA], theirs)
-  end)
-
-    host.service.call("update")
-    t.eq(host.files[AREA], nil)
   end)
 
   -- The bug: an instance that stopped thinking removed the area another instance had

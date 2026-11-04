@@ -227,6 +227,9 @@ type Scene = {
   ring: { point: Point, fromMs: number }?,
   -- Waiting between actions, where it may think.
   think: boolean?,
+  -- The call is over: the robot snaps to its spot rather than glide, so nothing moves
+  -- while the agent's settle wait runs.
+  between: boolean?,
 }
 
 function M.new(): Stage
@@ -534,17 +537,19 @@ local function held(view: any, nowMs: number, st: Stage, env: Env): Scene
   elseif not view.live then
     return legacy(view, nowMs, env)
   elseif call == nil then
-    return waiting(view, nowMs, if st.at then st.at.output else env.focused, canPublish(view, env))
+    local scene = waiting(view, nowMs, if st.at then st.at.output else env.focused, canPublish(view, env))
+    scene.between = true
+    return scene
   end
   local target = callTarget(call, st, env)
   local caption = describe.doing(call.tool, call.args, call.app, env.tr)
   if call.phase ~= "end" then
     return running(call, target, caption, nowMs)
-  elseif nowMs < call.endMs + M.CAPTION_MS then
-    return ended(call, target, caption, nowMs, env.tr)
   end
-  local scene = waiting(view, nowMs, target.output, canPublish(view, env))
-  scene.target = target
+  local scene = if nowMs < call.endMs + M.CAPTION_MS
+    then ended(call, target, caption, nowMs, env.tr)
+    else waiting(view, nowMs, target.output, canPublish(view, env))
+  scene.target, scene.between = target, true
   return scene
 end
 
@@ -616,9 +621,11 @@ local function position(st: Stage, nowMs: number): (number, number, boolean)
 end
 
 -- Moves the stage toward `spot`: a pop-in on a new output, a glide on the same one after
--- READY_MS getting ready, a drag's glide at once, and a snap while the agent looks.
-local function move(st: Stage, spot: Spot, from: Spot?, still: boolean, nowMs: number)
-  if still then
+-- READY_MS getting ready, a drag's glide at once, and a snap while the agent looks or
+-- once the call is over (`between`), which also ends a glide under way.
+local function move(st: Stage, spot: Spot, from: Spot?, found: Scene, nowMs: number)
+  local between = found.between and st.at ~= nil and st.at.output == spot.output
+  if found.still or between then
     if not sameSpot(st.at, spot) or st.from then
       st.startMs = nowMs
     end
@@ -702,10 +709,6 @@ local function union(a: Rect, b: Rect): Rect
   return { x = x, y = y, width = right - x, height = bottom - y }
 end
 
-local function sameSpot(a: Spot, b: Spot): boolean
-  return a.output == b.output and a.x == b.x and a.y == b.y and a.side == b.side
-end
-
 -- The area to publish where the robot stands: one that covers what it drew there since
 -- it arrived, so the area stays the same until it leaves, unless that grows past
 -- AREA_MAX. Nil when even this frame's doesn't fit.
@@ -763,7 +766,7 @@ function M.step(st: Stage, view: any, nowMs: number, env: Env): Frame
     held.moving, held.nextMs, held.area = false, nil, nil
     return held
   end
-  move(st, spot, if found.drag then from else nil, found.still, nowMs)
+  move(st, spot, if found.drag then from else nil, found, nowMs)
   local x, y, gliding = position(st, nowMs)
   local popping = st.popMs ~= nil and nowMs < st.popMs + M.POP_MS
   local readying = gliding and nowMs < st.startMs

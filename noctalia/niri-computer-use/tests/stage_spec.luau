@@ -538,41 +538,66 @@ t.group("stage", function()
     end)
 
     -- The bug: the hop, the ring, an error's caption or the caption going away drawn
-    -- outside the published area, or the area changing under them, so a settle wait
-    -- that starts as the action ends never sees two samples alike.
-    t.test("from the moment it arrives, one area covers the hop, the ring and the caption going", function()
+    -- outside the published area, the area changing under them, or a glide after the
+    -- call ended (an end delivered alone, or before the robot got there), so a settle
+    -- wait that starts as the action ends never sees two samples alike.
+    t.test("from the action's end, one area covers the hop, the ring and the caption going", function()
       local outcomes = {
         { name = "accepted", outcome = { accepted = true } },
         { name = "error", outcome = { accepted = nil, error = "focus_mismatch" } },
       }
+      local arrived = T + stage.READY_MS + stage.GLIDE_MS
+      -- When the end comes: alone, as a coalesced read gives it; while the robot gets
+      -- ready or glides; or once it has arrived, after a look or not.
+      local timings = {
+        { name = "end only", endMs = T },
+        { name = "early end", endMs = T + stage.READY_MS + 20 },
+        { name = "arrived", endMs = arrived + 50 },
+        { name = "looked", endMs = arrived + 50, look = true },
+      }
+      local function rect(a)
+        return if a then `{a.x},{a.y},{a.width},{a.height}` else "none"
+      end
+      -- Whether the robot itself stands where it did, whatever its caption's width, to
+      -- the whole pixel a frame is placed at.
+      local function stays(f, was, scale)
+        local function x(frame)
+          local captioned = frame.side == "left" and (frame.caption or frame.bubble)
+          return frame.x + (if captioned then (stage.dims(frame.size, scale).inner + frame.width) * scale else 0)
+        end
+        return f.output == was.output and f.y == was.y and math.abs(x(f) - x(was)) < 1
+      end
       for _, setting in { { 72, 2.5 }, { 40, 0.5 }, { 56, 1 } } do
         local size, scale = setting[1], setting[2]
         local at = envAt(scale, size)
         at.think = true
         local d = stage.dims(size, scale)
         for _, x in { 120, 1000, 1900 } do
-          for _, looked in { false, true } do
+          for _, timing in timings do
             for _, ending in outcomes do
-              local label = `size {size} at {scale}, x {x}, look {looked}, {ending.name}`
+              local label = `size {size} at {scale}, x {x}, {timing.name}, {ending.name}`
               local model, st = desk()
-              live.feed(model, { event = "hello", format = 1, overlay = OVERLAY }, T - 900)
-              live.feed(model, click(1, x, 320.4), T)
-              local arrived = T + stage.READY_MS + stage.GLIDE_MS
-              frame(model, st, T, at)
-              if looked then
-                live.feed(model, click(1, x, 320.4, "look"), arrived + 10)
+              live.feed(model, { event = "hello", format = 1, overlay = OVERLAY }, T - 9000)
+              -- Standing after an earlier click elsewhere.
+              live.feed(model, fx.with(click(1, 1000, 900, "end"), { outcome = { accepted = true } }), T - 8000)
+              frame(model, st, T - 8000, at)
+              frame(model, st, T - 1000, at)
+              if timing.name ~= "end only" then
+                live.feed(model, click(2, x, 320.4), T)
+                frame(model, st, T, at)
               end
-              local endMs = arrived + 50
-              live.feed(model, fx.with(click(1, x, 320.4, "end"), { outcome = ending.outcome }), endMs)
+              if timing.look then
+                live.feed(model, click(2, x, 320.4, "look"), arrived + 10)
+              end
+              local endMs = timing.endMs
+              live.feed(model, fx.with(click(2, x, 320.4, "end"), { outcome = ending.outcome }), endMs)
               local first = frame(model, st, endMs, at)
-              t.ok(first.area ~= nil, label .. ": no area as the call ends")
-              local function rect(a)
-                return if a then `{a.x},{a.y},{a.width},{a.height}` else "none"
-              end
+              t.ok(first.area ~= nil and not first.moving, label .. ": standing with an area as the call ends")
               local captions, rings, hopped = {}, false, false
               for nowMs = endMs, endMs + stage.CAPTION_MS + 3000, 100 do
                 local f = frame(model, st, nowMs, at)
                 t.eq(rect(f.area), rect(first.area), `{label} at {nowMs - endMs}: the area`)
+                t.ok(stays(f, first, scale), `{label} at {nowMs - endMs}: moved`)
                 for _, box in stage.layout(f, d) do
                   t.ok(f.area and within(box, f.area), `{label} at {nowMs - endMs}: {box.key} outside the area`)
                   rings = rings or box.key == "ring"
