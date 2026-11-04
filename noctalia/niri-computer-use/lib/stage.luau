@@ -6,6 +6,9 @@
 --
 -- While the agent looks at the screen (a call's `look` phase, until its `end`), nothing
 -- the robot shows changes, so the robot never keeps the agent's own settle wait going.
+-- Between actions it may think in place: it blinks, bobs in its room to hop, pulses its
+-- antenna and shows a thought bubble, all inside the frame's `area`, which robot.luau
+-- publishes and the server's settle waits leave out. Nothing else changes meanwhile.
 
 local describe = require("./describe.luau")
 local live = require("./live.luau")
@@ -45,6 +48,18 @@ M.ASK_MS = 500
 M.GOODBYE_MS = 1200
 M.WAVE_MS = 300
 M.DOZE_MS = 8000
+-- Thinking in place: every change falls on a beat. It blinks one beat in 32, pulses its
+-- antenna six beats out of twelve, bobs every four beats and moves the bubble's dot
+-- every two. It dozes after THINK_MS without a record instead of DOZE_MS.
+M.BEAT_MS = 150
+M.THINK_MS = 60000
+local BOB = { 0, 1, 2, 1 }
+-- The area is the robot, its room to hop and the bubble, this far around, in logical
+-- pixels, for the rounding of the layer's tree.
+M.AREA_PAD = 2
+-- The largest area the server leaves out, which tests/fixtures/overlay-areas.jsonl
+-- shares with it. The robot doesn't think where its area would be larger.
+M.AREA_MAX = { width = 362, height = 197 }
 -- How long the robot stays beside its last target for an action without one.
 M.SPOT_MS = 30000
 
@@ -66,6 +81,8 @@ M.POSES = {
   "wave-b",
   "doze",
   "stop",
+  "blink",
+  "pulse",
 }
 
 type Tr = (key: string, vars: { [string]: any }?) -> string
@@ -130,6 +147,9 @@ export type Env = {
   -- Each output's logical size, for one no action has named yet.
   areas: { [string]: Area },
   tr: Tr,
+  -- The robot may think between actions: the server leaves its area out and the layer
+  -- can publish it.
+  think: boolean?,
 }
 
 -- The robot's top-left corner on an output, with its caption on `side`.
@@ -170,6 +190,10 @@ export type Frame = {
   moving: boolean,
   -- When the next change is due without a new record, if sooner than the usual tick.
   nextMs: number?,
+  -- Thinking: the thought bubble's lit dot, 1 to 3, in the caption's place, and the area
+  -- in the output's logical pixels that thinking changes.
+  bubble: number?,
+  area: Rect?,
 }
 
 export type Ring = { x: number, y: number, size: number, opacity: number }
@@ -196,6 +220,8 @@ type Scene = {
   drag: boolean,
   -- A click's point and when its ring starts.
   ring: { point: Point, fromMs: number }?,
+  -- Waiting between actions, where it may think.
+  think: boolean?,
 }
 
 function M.new(): Stage
@@ -448,9 +474,12 @@ local function resting(output: string, pose: string, caption: string?, role: str
   }
 end
 
-local function waiting(view: any, nowMs: number, output: string): Scene
-  local dozeMs = (view.heardMs or 0) + M.DOZE_MS
-  return resting(output, if nowMs >= dozeMs then "doze" else "idle", nil, "primary", if nowMs < dozeMs then dozeMs else nil)
+local function waiting(view: any, nowMs: number, output: string, think: boolean): Scene
+  local dozeMs = (view.heardMs or 0) + if think then M.THINK_MS else M.DOZE_MS
+  local dozing = nowMs >= dozeMs
+  local scene = resting(output, if dozing then "doze" else "idle", nil, "primary", if dozing then nil else dozeMs)
+  scene.think = think and not dozing
+  return scene
 end
 
 -- A session whose server writes no `live` records: the robot waits at home and shows
@@ -459,7 +488,7 @@ local function legacy(view: any, nowMs: number, env: Env): Scene
   local call = view.legacy
   local home = { kind = "home", output = env.focused }
   if call == nil or nowMs - call.atMs >= M.CAPTION_MS then
-    local scene = waiting(view, nowMs, env.focused)
+    local scene = waiting(view, nowMs, env.focused, false)
     scene.target = home
     return scene
   end
@@ -486,6 +515,12 @@ local function openCall(view: any, nowMs: number): any
   return call
 end
 
+-- The robot may think: the layer can publish its area, and `watch` named where, so every
+-- server on the instance is a build that leaves it out.
+local function canThink(view: any, env: Env): boolean
+  return env.think == true and type(view.overlay) == "string" and view.replaced ~= true
+end
+
 local function held(view: any, nowMs: number, st: Stage, env: Env): Scene
   local call = openCall(view, nowMs)
   if view.stopped then
@@ -494,7 +529,7 @@ local function held(view: any, nowMs: number, st: Stage, env: Env): Scene
   elseif not view.live then
     return legacy(view, nowMs, env)
   elseif call == nil then
-    return waiting(view, nowMs, if st.at then st.at.output else env.focused)
+    return waiting(view, nowMs, if st.at then st.at.output else env.focused, canThink(view, env))
   end
   local target = callTarget(call, st, env)
   local caption = describe.doing(call.tool, call.args, call.app, env.tr)
@@ -503,7 +538,7 @@ local function held(view: any, nowMs: number, st: Stage, env: Env): Scene
   elseif nowMs < call.endMs + M.CAPTION_MS then
     return ended(call, target, caption, nowMs, env.tr)
   end
-  local scene = waiting(view, nowMs, target.output)
+  local scene = waiting(view, nowMs, target.output, canThink(view, env))
   scene.target = target
   return scene
 end
@@ -668,7 +703,8 @@ function M.step(st: Stage, view: any, nowMs: number, env: Env): Frame
   -- robot stays as it was, or stays away, and moves at the call's end.
   if found.still and (st.at == nil or (st.at :: Spot).output ~= spot.output) then
     local held = if st.last then table.clone(st.last :: Frame) else table.clone(HIDDEN)
-    held.moving, held.nextMs = false, nil
+    -- Held, it changes nothing, so it publishes no area either.
+    held.moving, held.nextMs, held.area = false, nil, nil
     return held
   end
   move(st, spot, if found.drag then from else nil, found.still, nowMs)
@@ -684,14 +720,23 @@ function M.step(st: Stage, view: any, nowMs: number, env: Env): Frame
       pose = if leftward then "lean-l" else "lean-r"
     end
   end
+  local nextMs = found.nextMs
+  local thinking = found.think == true and not gliding and not popping and M.fits(M.footprint(d))
+  local bubble, bob = nil, 0
+  if thinking then
+    local beat = math.floor(nowMs / M.BEAT_MS)
+    pose = if beat % 32 == 31 then "blink" elseif math.floor(beat / 6) % 2 == 1 then "pulse" else "idle"
+    bob = BOB[math.floor(beat / 4) % 4 + 1]
+    bubble = math.floor(beat / 2) % 3 + 1
+    nextMs = (beat + 1) * M.BEAT_MS
+  end
   -- The caption never moves: it shows once the robot has arrived.
   local caption = if gliding then nil else found.caption
-  local width = if caption then M.captionWidth(caption, d) else 0
+  local width = if caption then M.captionWidth(caption, d) elseif bubble then d.captionMin else 0
   local side = (st.at :: Spot).side
-  if caption and side == "left" then
+  if (caption or bubble) and side == "left" then
     x -= (d.inner + width) * env.scale
   end
-  local nextMs = found.nextMs
   local ring = nil
   if found.ring and not gliding then
     local r = ringRadius(found.ring.point, st.at :: Spot, areaOf(view, env, spot.output), d)
@@ -724,13 +769,18 @@ function M.step(st: Stage, view: any, nowMs: number, env: Env): Frame
     role = found.role,
     width = width,
     size = env.size,
-    lift = if pose == "tap" then d.lift else 0,
+    lift = if pose == "tap" then d.lift else bob,
     ring = ring,
     side = side,
     opacity = if popping then math.floor((nowMs - (st.popMs :: number)) / M.POP_MS * 4) / 4 else 1,
     moving = moving,
     nextMs = nextMs,
+    bubble = bubble,
+    area = nil,
   }
+  if thinking then
+    frame.area = M.area(frame, d)
+  end
   st.last = frame
   return frame
 end
@@ -742,7 +792,7 @@ function M.key(frame: Frame): string
   end
   local ring = frame.ring
   local drawn = if ring then `{ring.x},{ring.y},{ring.size},{ring.opacity}` else ""
-  return `{frame.x},{frame.y}|{frame.pose}|{frame.caption or ""}|{frame.role}|{frame.side}|{frame.width}|{frame.size}|{frame.lift}|{drawn}|{frame.opacity}`
+  return `{frame.x},{frame.y}|{frame.pose}|{frame.caption or ""}|{frame.role}|{frame.side}|{frame.width}|{frame.size}|{frame.lift}|{drawn}|{frame.opacity}|{frame.bubble or ""}`
 end
 
 -- A box to draw, in logical pixels: the robot with its room to hop and its caption
@@ -752,7 +802,7 @@ export type Placed = { key: string, x: number, y: number, width: number, height:
 -- What `frame` draws, and the axis that keeps the boxes apart: the tree places boxes
 -- side by side along it, since nothing in Noctalia's tree can overlap.
 function M.layout(frame: Frame, d: Dims): ({ Placed }, string)
-  local captioned = if frame.caption then (d.inner + frame.width) * d.scale else 0
+  local captioned = if frame.caption or frame.bubble then (d.inner + frame.width) * d.scale else 0
   local group = { key = "group", x = frame.x, y = frame.y - d.room, width = d.robot + captioned, height = d.robot + d.room }
   local ring = frame.ring
   if ring == nil then
@@ -763,6 +813,34 @@ function M.layout(frame: Frame, d: Dims): ({ Placed }, string)
     return if box.x < group.x then { box, group } else { group, box }, "x"
   end
   return if box.y < group.y then { box, group } else { group, box }, "y"
+end
+
+-- The size of the area a thinking robot of `d` changes: the robot, its room to hop and
+-- the bubble beside it, AREA_PAD around.
+function M.footprint(d: Dims): Area
+  return {
+    width = d.robot + (d.inner + d.captionMin) * d.scale + 2 * M.AREA_PAD,
+    height = d.robot + d.room + 2 * M.AREA_PAD,
+  }
+end
+
+-- Whether the server leaves out an area of `size`.
+function M.fits(size: Area): boolean
+  return size.width <= M.AREA_MAX.width and size.height <= M.AREA_MAX.height
+end
+
+-- The area a thinking `frame` changes, in its output's logical pixels: its group,
+-- AREA_PAD around.
+function M.area(frame: Frame, d: Dims): Rect
+  local boxes = M.layout(frame, d)
+  local group = boxes[1]
+  for _, box in boxes do
+    if box.key == "group" then
+      group = box
+    end
+  end
+  local pad = M.AREA_PAD
+  return { x = group.x - pad, y = group.y - pad, width = group.width + 2 * pad, height = group.height + 2 * pad }
 end
 
 return M

@@ -38,11 +38,12 @@ const FRESH_MS: u64 = 5000;
 /// How far ahead of the server's clock a `ts` may be, for the time the write takes to be
 /// read. A later one would keep counting long after the layer stopped.
 const SKEW_MS: u64 = 1000;
-/// The largest rectangle the plugin publishes, in logical pixels: the 72-pixel robot, its
-/// 5-pixel room to hop, the gap and its 61-pixel thought bubble, 143 x 77 units at
-/// Noctalia's largest UI scale, 2.5, with 2 pixels around. A larger one isn't the robot.
-/// `tests/fixtures/overlay-areas.jsonl` holds the plugin's own rectangles, and a test here
-/// requires each to fit.
+/// The largest rectangle the plugin publishes, in logical pixels, rounded up: the 72-pixel
+/// robot, its 5-pixel room to hop, the gap and its 61-pixel thought bubble, 143 x 77 units
+/// at Noctalia's largest UI scale, 2.5, with 2 pixels around. A larger one isn't the
+/// robot. `noctalia/niri-computer-use/tests/fixtures/overlay-areas.jsonl` holds the
+/// plugin's rectangles for every size, UI scale and side, which the plugin's tests
+/// generate, and a test here requires each to fit and the largest to round up to these.
 pub(crate) const MAX_WIDTH: f64 = 362.0;
 pub(crate) const MAX_HEIGHT: f64 = 197.0;
 
@@ -360,6 +361,37 @@ mod tests {
             masked(&area([150.0, 150.0, 40.0, 30.0]), &other, (200, 100)),
             None
         );
+    }
+
+    // The bug: an area the plugin publishes that the server refuses as too large, so a
+    // size or UI scale the plugin offers thinks with every pixel compared; or a cap far
+    // above the plugin's largest area, which lets a stray file hide more than the robot.
+    #[test]
+    fn takes_every_area_the_plugin_publishes_and_no_larger_cap() {
+        const SHARED: &str =
+            include_str!("../noctalia/niri-computer-use/tests/fixtures/overlay-areas.jsonl");
+        let (mut widest, mut tallest, mut areas) = (0.0_f64, 0.0_f64, 0);
+        for line in SHARED.lines() {
+            let entry: serde_json::Value = serde_json::from_str(line).unwrap();
+            if let Some(max) = entry.get("max") {
+                assert_eq!(
+                    (max["width"].as_f64(), max["height"].as_f64()),
+                    (Some(MAX_WIDTH), Some(MAX_HEIGHT))
+                );
+                continue;
+            }
+            let rect = &entry["rect"];
+            let published = serde_json::json!({"output": "DP-1", "rect": rect, "incarnation": "DP-1 1", "ts": NOW});
+            assert!(
+                parse(published.to_string().as_bytes(), NOW).is_some(),
+                "{line}"
+            );
+            widest = widest.max(rect["width"].as_f64().unwrap());
+            tallest = tallest.max(rect["height"].as_f64().unwrap());
+            areas += 1;
+        }
+        assert!(areas > 200, "{areas} areas");
+        assert_eq!((widest.ceil(), tallest.ceil()), (MAX_WIDTH, MAX_HEIGHT));
     }
 
     // The bug: a FIFO or a link to one in the runtime directory hangs every settle.

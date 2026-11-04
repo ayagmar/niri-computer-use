@@ -7,6 +7,7 @@ All notable changes to this project are documented here. The format follows [Kee
 ### Added
 
 - The Noctalia plugin's `Robot size` setting: the overlay's robot is 40, 56 or 72 pixels tall, before the UI scale, and its caption grows with it.
+- Between actions, the overlay's robot thinks in place: it blinks, bobs, pulses its antenna and shows a bubble of three dots. The plugin publishes the rectangle it changes, which settle waits leave out, and it stays still with a server that doesn't. It dozes after a minute instead of eight seconds.
 - The overlay shows a click: the robot hops, and a ring grows and fades on the exact point. Before it sets off for a new spot, the robot looks and crouches toward it.
 
 ### Changed

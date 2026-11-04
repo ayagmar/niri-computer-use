@@ -67,6 +67,8 @@ function M.new(sources)
     dirs = { ["/data/plugin"] = true },
     writes = 0,
     failWrites = false,
+    -- Each rename and removal, with how many renders the layer had drawn by then.
+    fileOps = {},
   }
 
   local function tr(key: string, vars)
@@ -142,6 +144,7 @@ function M.new(sources)
         return false, "no such file"
       end
       host.files[to], host.files[from] = host.files[from], nil
+      table.insert(host.fileOps, { op = "rename", path = to, renders = host.layer.renders })
       return true
     end,
     removeFile = function(path)
@@ -149,6 +152,7 @@ function M.new(sources)
         return false, "no such file"
       end
       host.files[path] = nil
+      table.insert(host.fileOps, { op = "remove", path = path, renders = host.layer.renders })
       return true
     end,
     listDir = function(path)

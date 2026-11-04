@@ -49,7 +49,7 @@ end
 -- The rectangle the robot and its caption cover in a frame.
 local function covers(f, scale)
   local d = stage.dims(f.size, scale)
-  local width = d.robot + (if f.caption then (d.inner + f.width) * scale else 0)
+  local width = d.robot + (if f.caption or f.bubble then (d.inner + f.width) * scale else 0)
   return f.x, f.y, f.x + width, f.y + d.robot
 end
 
@@ -61,7 +61,7 @@ local function clearance(p, left, top, right, bottom)
 end
 
 local function same(a, b, label)
-  for _, key in { "output", "x", "y", "pose", "caption", "role", "opacity", "visible", "lift" } do
+  for _, key in { "output", "x", "y", "pose", "caption", "role", "opacity", "visible", "lift", "bubble" } do
     t.eq(a[key], b[key], `{label}: {key}`)
   end
   local ra, rb = a.ring or {}, b.ring or {}
@@ -469,6 +469,174 @@ t.group("stage", function()
     return string.format("2026-10-30T%02d:%02d:%02d.%03dZ", day // 3600, day % 3600 // 60, day % 60, ms % 1000)
   end
 
+  t.group("thinking", function()
+    local OVERLAY = "/run/user/1000/niri-computer-use/niri.sock/overlay.json"
+    local THINK = table.clone(ENV)
+    THINK.think = true
+
+    -- The fixtures' agent clicked at (x, 320.4), 650 by default, and the call ended at T,
+    -- with `watch` naming the area file unless `overlay` is false, and the robot drawn
+    -- then, by `at`.
+    local function thinker(overlay, at, x)
+      local model, st = desk()
+      live.feed(model, { event = "hello", format = 1, overlay = if overlay == false then nil else OVERLAY }, T - 900)
+      live.feed(model, fx.with(click(1, x or 650, 320.4, "end"), { outcome = { accepted = true } }), T)
+      frame(model, st, T, at or THINK)
+      return model, st
+    end
+
+    -- Whether `inner` lies within `outer`.
+    local function within(inner, outer)
+      return inner.x >= outer.x
+        and inner.y >= outer.y
+        and inner.x + inner.width <= outer.x + outer.width
+        and inner.y + inner.height <= outer.y + outer.height
+    end
+
+    -- The bug: an animation that leaves the area the server leaves out, or one fast
+    -- enough to keep a settle wait's run from starting, breaks the agent's screenshots.
+    t.test("between actions it thinks in place: a change every beat or so, all inside its area", function()
+      for _, size in { 40, 56, 72 } do
+        for _, scale in { 1, 1.5, 2.5 } do
+          local at = envAt(scale, size)
+          at.think = true
+          local d = stage.dims(size, scale)
+          local model, st = thinker(nil, at)
+          local start = T + stage.CAPTION_MS + 1000
+          local first = frame(model, st, start, at)
+          local label = `size {size} at {scale}`
+          t.ok(first.area ~= nil, label .. ": no area")
+          t.ok(stage.fits({ width = first.area.width, height = first.area.height }), label .. ": too large")
+          local poses, lifts, changes = {}, {}, {}
+          local lastKey = stage.key(first)
+          for nowMs = start, start + 10000, 10 do
+            local f = frame(model, st, nowMs, at)
+            for _, key in { "output", "x", "y", "side", "width", "caption" } do
+              t.eq(f[key], first[key], `{label} at {nowMs - start}: {key}`)
+            end
+            t.eq(`{f.area.x},{f.area.y},{f.area.width},{f.area.height}`, `{first.area.x},{first.area.y},{first.area.width},{first.area.height}`, label .. ": the area moved")
+            for _, box in stage.layout(f, d) do
+              t.ok(within(box, f.area), `{label}: {box.key} outside the area`)
+            end
+            t.ok(f.lift <= d.lift, label .. ": bobs out of its room")
+            t.ok(f.nextMs > nowMs and f.nextMs <= nowMs + stage.BEAT_MS, label .. ": the next beat")
+            poses[f.pose], lifts[f.lift] = true, true
+            local key = stage.key(f)
+            if key ~= lastKey then
+              table.insert(changes, nowMs)
+              lastKey = key
+            end
+          end
+          t.ok(poses.idle and poses.blink and poses.pulse, label .. ": blinks and pulses")
+          t.ok(lifts[0] and lifts[1] and lifts[2], label .. ": bobs")
+          for i = 2, #changes do
+            local apart = changes[i] - changes[i - 1]
+            t.ok(apart >= 100 and apart <= 1000, `{label}: changes {apart} ms apart`)
+          end
+        end
+      end
+    end)
+
+    -- The bug: thinking where the server compares the robot's pixels keeps every settle
+    -- wait going for as long as it thinks.
+    t.test("it doesn't think where the server wouldn't leave its area out or it can't publish it", function()
+      local after = T + stage.CAPTION_MS + 1000
+      local function still(model, st, at, label)
+        local f = frame(model, st, after, at)
+        t.eq(f.area, nil, label)
+        t.eq(f.bubble, nil, label)
+        t.eq(f.pose, "idle", label)
+        t.eq(f.nextMs, T + stage.DOZE_MS, label .. ": dozes as before")
+      end
+      local model, st = thinker(false)
+      still(model, st, THINK, "a watch that names no area file")
+      model, st = thinker(nil, ENV)
+      still(model, st, ENV, "the layer can't publish")
+      live.feed(model, fx.state(nil, { clients = { { pid = 4, replaced = false }, { pid = 5, replaced = true } } }), T + 1)
+      still(model, st, THINK, "a server an update replaced")
+      live.feed(model, fx.state(nil, { clients = { { pid = 4, replaced = false } } }), T + 2)
+      t.ok(frame(model, st, after, THINK).area ~= nil, "thinks once it is gone")
+      live.feed(model, { event = "hello", format = 1 }, T + 3)
+      still(model, st, THINK, "a new watch that names no area file")
+      -- A server without `live` records.
+      model, st = desk()
+      live.feed(model, { event = "hello", format = 1, overlay = OVERLAY }, T - 900)
+      live.feed(model, { event = "action", ts = "2026-10-30T12:00:00.400Z", session = fx.HOLDER, tool = "scroll", args = {} }, T)
+      frame(model, st, T, THINK)
+      t.eq(frame(model, st, after, THINK).area, nil, "an older server's session")
+      -- Too large for the server: the largest robot past Noctalia's largest UI scale.
+      local huge = envAt(3, 72)
+      huge.think = true
+      model, st = thinker(nil, huge)
+      t.eq(frame(model, st, after, huge).area, nil, "an area the server would refuse")
+    end)
+
+    t.test("it thinks only while no call runs, and stops before the robot moves", function()
+      local model, st = thinker()
+      t.eq(frame(model, st, T + 500, THINK).area, nil, "the call's caption shows")
+      local thought = frame(model, st, T + stage.CAPTION_MS, THINK)
+      t.ok(thought.area ~= nil, "thinks once the caption is gone")
+      live.feed(model, click(2, 1200, 700, "start"), T + 4000)
+      t.eq(frame(model, st, T + 4000, THINK).area, nil, "a call starts")
+      live.feed(model, click(2, 1200, 700), T + 4010)
+      local f = frame(model, st, T + 4010, THINK)
+      t.eq(f.area, nil, "gets ready to glide")
+      t.eq(f.x, thought.x + (D.inner + D.captionMin), "where it stood, its bubble gone")
+    end)
+
+    t.test("dozes after THINK_MS without a record, with nothing scheduled and no area", function()
+      local model, st = thinker()
+      t.ok(frame(model, st, T + stage.DOZE_MS, THINK).area ~= nil, "thinks past DOZE_MS")
+      local f = frame(model, st, T + stage.THINK_MS, THINK)
+      t.eq(f.pose, "doze")
+      t.eq(f.area, nil)
+      t.eq(f.bubble, nil)
+      t.eq(f.nextMs, nil)
+    end)
+
+    t.test("a release while it thinks waves goodbye without an area, then it is gone", function()
+      local model, st = thinker()
+      t.ok(frame(model, st, T + 3000, THINK).area ~= nil)
+      live.feed(model, fx.state(false), T + 3100)
+      local bye = frame(model, st, T + 3100, THINK)
+      t.ok(bye.visible and bye.area == nil and bye.pose:match("^wave"), bye.pose)
+      t.eq(frame(model, st, T + 3100 + stage.GOODBYE_MS, THINK).visible, false)
+    end)
+
+    -- The bug: an area the plugin publishes that the server refuses as too large, so a
+    -- setting the plugin offers thinks with every pixel compared.
+    t.test("every size, UI scale and side gives the areas the server's tests read", function()
+      local lines = { `\{"max":\{"width":{stage.AREA_MAX.width},"height":{stage.AREA_MAX.height}}}` }
+      local n = function(value)
+        return string.format("%.4f", value)
+      end
+      for _, size in { 40, 56, 72 } do
+        for step = 10, 50 do
+          local scale = step / 20
+          local at = envAt(scale, size)
+          at.think = true
+          for _, x in { 120, 1900 } do
+            local model, st = thinker(nil, at, x)
+            local f = frame(model, st, T + stage.CAPTION_MS + 1000, at)
+            local a = f.area
+            t.ok(a ~= nil, `size {size} at {scale}: no area`)
+            local rect = `\{"x":{n(a.x)},"y":{n(a.y)},"width":{n(a.width)},"height":{n(a.height)}}`
+            table.insert(lines, `\{"size":{size},"scale":{n(scale)},"side":"{f.side}","rect":{rect}}`)
+          end
+        end
+      end
+      local generated = table.concat(lines, "\n") .. "\n"
+      local shared = env.sources["tests/fixtures/overlay-areas.jsonl"]
+      if shared ~= generated then
+        print(generated)
+      end
+      t.eq(shared, generated, "tests/fixtures/overlay-areas.jsonl differs; the generated lines are above")
+    end)
+  end)
+
+  local THINKING = table.clone(ENV)
+  THINKING.think = true
+
   t.test("generated sequences keep the overlay's invariants", function()
     local captions = { [tr("overlay.stopped")] = true, [tr("overlay.asking")] = true }
     for seed = 1, 300 do
@@ -493,15 +661,17 @@ t.group("stage", function()
           end
           captions[describe.doing(event.tool, event.args, event.window and event.window.app_id, tr) or ""] = true
           captions[describe.doing(event.tool, event.args, nil, tr) or ""] = true
+          -- A call keeps the app an earlier record of it named.
+          captions[describe.doing(event.tool, event.args, "kitty", tr) or ""] = true
           live.feed(model, event, nowMs)
           quiet = true
         elseif kind == 5 then
           local choice = pick(5)
           holder = if choice == 1 then nil else fx.HOLDER
-          local extra = { stopped = pick(6) == 1, pending = choice == 2 }
+          local extra = { stopped = pick(6) == 1, pending = choice == 2, clients = { { pid = 4, replaced = pick(4) == 1 } } }
           live.feed(model, fx.state(if holder then holder else false, extra), nowMs)
         elseif kind == 6 then
-          live.feed(model, { event = "hello", format = 1 }, nowMs)
+          live.feed(model, { event = "hello", format = 1, overlay = if pick(3) > 1 then "/run/overlay.json" else nil }, nowMs)
         elseif kind == 7 then
           -- As the layer Noctalia builds on another output, or the plugin restarting.
           st = stage.new()
@@ -518,8 +688,24 @@ t.group("stage", function()
           movedSince = nil
         end
         local view = live.view(model)
-        local f = stage.step(st, view, nowMs, ENV)
+        local f = stage.step(st, view, nowMs, THINKING)
         local label = `seed {seed} at {nowMs - T}`
+        -- Thinking only between actions of a server that leaves its area out, and only
+        -- inside that area, which stays put while it thinks.
+        if f.area then
+          local call = view.call
+          local idle = call == nil or (call.phase == "end" and nowMs >= call.endMs + stage.CAPTION_MS) or nowMs - view.heardMs >= live.STALE_MS
+          t.ok(view.overlay and not view.replaced and view.live and not view.stopped and idle, label .. ": thinks during an action or unpublished")
+          for _, box in stage.layout(f, stage.dims(f.size, 1)) do
+            local a = f.area
+            t.ok(box.x >= a.x and box.y >= a.y and box.x + box.width <= a.x + a.width and box.y + box.height <= a.y + a.height, label .. `: {box.key} outside the area`)
+          end
+          if drawn and drawn.area then
+            for _, key in { "output", "x", "y", "side", "width", "caption" } do
+              t.eq(f[key], drawn[key], `{label}: {key} changed while it thought`)
+            end
+          end
+        end
         local key = view.call and `{view.call.pid}/{view.call.call}`
         -- Visible only while an agent holds or asks, or for the goodbye.
         if f.visible and view.holder == nil then

@@ -782,6 +782,100 @@ t.group("robot", function()
     end
   end)
 
+  -- The service and the layer as `overlay` gives them, with a `watch` that names the area
+  -- file, and the agent's click at (650, 320.4) ended: the robot thinks from CAPTION_MS on.
+  local AREA_DIR = "/run/user/1000/niri-computer-use/niri.sock"
+  local AREA = AREA_DIR .. "/overlay.json"
+  local function thinking()
+    local host, robot = overlay()
+    host.dirs[AREA_DIR] = true
+    host.event({ event = "hello", format = 1, overlay = AREA })
+    host.event(fx.with(F.click_aim, { phase = "end", outcome = { accepted = true } }))
+    return host, robot
+  end
+
+  local function bubble(host)
+    return host.find(host.layer.tree, function(n)
+      return n.props.key == "bubble"
+    end)
+  end
+
+  local function ops(host, op)
+    local out = {}
+    for _, entry in host.fileOps do
+      if entry.op == op and entry.path == AREA then
+        table.insert(out, entry)
+      end
+    end
+    return out
+  end
+
+  -- The bug: a frame that thinks drawn before the server can read its area, or a robot
+  -- that moves while its old area is still published, changes pixels a settle leaves out.
+  t.test("publishes the area before the first frame that thinks, and removes it before the robot moves", function()
+    local host, robot = thinking()
+    t.eq(host.files[AREA], nil, "no area while the caption shows")
+    host.nowMs += stage.CAPTION_MS
+    local renders = host.layer.renders
+    robot.call("update")
+    t.ok(bubble(host) ~= nil, "thinks")
+    local written = ops(host, "rename")
+    t.eq(#written, 1)
+    t.eq(written[1].renders, renders, "written before the frame was drawn")
+    local area = host.globals.noctalia.json.decode(host.files[AREA])
+    t.eq(area.output, "HDMI-A-1")
+    t.ok(math.abs(area.ts - host.nowMs) < 1, "stamped now")
+    for path in host.files do
+      t.ok(not path:match("%.tmp$"), `{path} left behind`)
+    end
+    -- The group as drawn, in the output's logical pixels, is inside the area.
+    local x, y = placed(host.layer.tree, "group")
+    local w, h = sized(host.find(host.layer.tree, function(n)
+      return n.props.key == "group"
+    end))
+    t.ok(x >= area.rect.x and y >= area.rect.y, "group above-left of the area")
+    t.ok(x + w <= area.rect.x + area.rect.width and y + h <= area.rect.y + area.rect.height, "group past the area")
+    -- Written again every 2 s while it thinks, and not more often.
+    for _ = 1, 20 do
+      host.nowMs += 100
+      robot.call("update")
+    end
+    t.eq(#ops(host, "rename"), 2, "refreshed once in 2 s")
+    -- The next call: removed before the frame that gets ready to glide.
+    host.event(fx.with(F.click_aim, { call = 2, phase = "start", aim = nil }))
+    local removed = ops(host, "remove")
+    t.eq(#removed, 1)
+    t.eq(host.files[AREA], nil)
+    t.eq(bubble(host), nil, "drawn without thinking")
+    t.ok(removed[1].renders < host.layer.renders, "removed before that frame was drawn")
+  end)
+
+  t.test("doesn't think while the area can't be written, and does once it can", function()
+    local host, robot = thinking()
+    host.failWrites = true
+    host.nowMs += stage.CAPTION_MS
+    robot.call("update")
+    t.eq(host.files[AREA], nil)
+    t.eq(bubble(host), nil, "no frame thinks unpublished")
+    host.failWrites = false
+    for _ = 1, 3 do
+      host.nowMs += 1000
+      robot.call("update")
+    end
+    t.ok(host.files[AREA] ~= nil, "written once it can be")
+    t.ok(bubble(host) ~= nil, "thinks again")
+  end)
+
+  t.test("removes the area when the agent gives the desktop back", function()
+    local host, robot = thinking()
+    host.nowMs += stage.CAPTION_MS
+    robot.call("update")
+    t.ok(host.files[AREA] ~= nil)
+    host.event(fx.state(false))
+    t.eq(host.files[AREA], nil)
+    t.eq(bubble(host), nil)
+  end)
+
   t.test("draws nothing once the agent has gone", function()
     local host, robot = overlay()
     host.event(F.click_aim)

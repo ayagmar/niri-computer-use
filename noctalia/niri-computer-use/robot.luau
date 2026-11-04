@@ -3,6 +3,9 @@
 -- above windows that clicks and keys pass through. It draws what lib/stage.luau
 -- decides from the `live` state the service publishes. The layer covers the output
 -- and the robot is placed inside it; a target on another output moves the layer there.
+-- While the robot thinks in place, the layer publishes the area it changes in the file
+-- `watch`'s hello names, which the server's settle waits leave out: written before the
+-- first frame that thinks, and removed before any frame that doesn't.
 
 local art = require("./lib/art.luau")
 local stage = require("./lib/stage.luau")
@@ -13,6 +16,12 @@ local view = noctalia.state.get("live")
 local st = stage.new()
 local drawn = nil
 local interval = 1000
+-- The area file: the path it was written to, what it said, and when.
+local published = nil
+-- The last write failed: the robot doesn't think until one works.
+local unwritable = false
+local REFRESH_MS = 2000
+local incarnation = math.floor(noctalia.nowMs())
 -- The output this instance is on. `layer.outputName()` is nil in a state watcher.
 local here = layer.outputName()
 
@@ -83,6 +92,32 @@ local function gap(width: number, height: number)
   return ui.row({ width = width, height = height }, {})
 end
 
+-- The thought bubble: three dots in a pill where a caption would be, one of them lit.
+local function bubble(frame, d)
+  local dot = math.floor(d.captionHeight / 4 + 0.5)
+  local dots = {}
+  for i = 1, 3 do
+    table.insert(dots, ui.box({
+      key = `dot{i}`,
+      width = dot,
+      height = dot,
+      radius = dot / 2,
+      fill = "on_primary",
+      opacity = if i == frame.bubble then 1 else 0.35,
+    }))
+  end
+  return ui.row({
+    key = "bubble",
+    width = frame.width,
+    height = d.captionHeight,
+    paddingH = (frame.width - 3 * dot - 2 * dot) / 2,
+    gap = dot,
+    radius = d.captionHeight / 2,
+    align = "center",
+    fill = "primary",
+  }, dots)
+end
+
 -- The robot, with its room to hop above it, and its caption beside it.
 local function group(frame, d, box)
   local sprite = {}
@@ -102,7 +137,10 @@ local function group(frame, d, box)
       ui.row({}, sprite),
     }),
   }
-  if frame.caption then
+  if frame.bubble then
+    local beside = ui.column({ align = "start" }, { gap(1, d.lift), bubble(frame, d) })
+    table.insert(parts, if frame.side == "left" then 1 else #parts + 1, beside)
+  elseif frame.caption then
     local caption = ui.row({
       key = "caption",
       width = frame.width,
@@ -188,18 +226,64 @@ local function schedule(frame, nowMs: number)
   end
 end
 
-local function draw()
-  here = layer.outputName() or here
-  local nowMs = noctalia.nowMs()
-  local known = areas()
-  local scale = tonumber(noctalia.getSetting("accessibility.ui_scale")) or 1
-  local frame = stage.step(st, view, nowMs, {
+-- Removes the area file, before a frame that doesn't think is drawn.
+local function retract()
+  if published then
+    noctalia.removeFile(published.path)
+    published = nil
+  end
+end
+
+-- Publishes a thinking frame's area, again every REFRESH_MS, through a file of this
+-- instance's own and a rename. Whether the file says so now.
+local function publish(path: string, output: string, rect, nowMs: number): boolean
+  local said = `{output} {rect.x} {rect.y} {rect.width} {rect.height}`
+  if published and published.path == path and published.said == said and nowMs - published.atMs < REFRESH_MS then
+    return true
+  end
+  local json = noctalia.json.encode({
+    output = output,
+    rect = { x = rect.x, y = rect.y, width = rect.width, height = rect.height },
+    incarnation = `{output} {incarnation}`,
+    ts = math.floor(nowMs),
+  })
+  local tmp = `{path}.{incarnation}.tmp`
+  if json == nil or not (noctalia.writeFile(tmp, json) and noctalia.renameFile(tmp, path)) then
+    noctalia.removeFile(tmp)
+    retract()
+    return false
+  end
+  published = { path = path, said = said, atMs = nowMs }
+  return true
+end
+
+local function step(nowMs: number, known, scale: number)
+  return stage.step(st, view, nowMs, {
     scale = scale,
     size = size(),
     focused = noctalia.focusedOutputName() or here,
     areas = known,
     tr = noctalia.tr,
+    think = not unwritable,
   })
+end
+
+local function draw()
+  here = layer.outputName() or here
+  local nowMs = noctalia.nowMs()
+  local known = areas()
+  local scale = tonumber(noctalia.getSetting("accessibility.ui_scale")) or 1
+  local frame = step(nowMs, known, scale)
+  if frame.area and frame.output == here then
+    unwritable = not publish(view.overlay, here, frame.area, nowMs)
+    if unwritable then
+      frame = step(nowMs, known, scale)
+    end
+  else
+    -- Retried at the next frame that would think, which this one isn't.
+    unwritable = false
+    retract()
+  end
   schedule(frame, nowMs)
   if frame.visible and here and frame.output ~= here then
     -- niri and Noctalia name outputs alike. This instance ends, and the one Noctalia
