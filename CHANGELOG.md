@@ -2,7 +2,7 @@
 
 All notable changes to this project are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## Unreleased
+## 0.1.8 - 2026-11-04
 
 ### Added
 
@@ -17,6 +17,11 @@ All notable changes to this project are documented here. The format follows [Kee
 - The overlay's robot takes the Noctalia theme's colours instead of fixed light grey ones.
 - The overlay's robot stands 16 pixels from a click instead of 12, which leaves room for the ring.
 - Settled screenshots and `wait_for screen_stable` leave out the rectangle the Noctalia plugin's overlay publishes in `overlay.json`, which `watch`'s `hello` names as `overlay`, so the robot thinking in place doesn't keep them waiting.
+
+### Fixed
+
+- The install script's closing steps are numbered in the order they print. They read 1, 2, 4, 3.
+- `release_desktop`'s description, the skill and the docs say that `restored` with `accepted: false` and `observed: "focused"` means the user's window already had focus, so nothing was sent; agents read it as a failure.
 
 ## 0.1.7 - 2026-10-30
 
