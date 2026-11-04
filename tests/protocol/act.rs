@@ -2254,8 +2254,11 @@ async fn a_client_that_goes_mid_action_frees_the_lease_at_once() {
     );
     let went = Instant::now();
     desk.server.stop().await;
+    // An action left running would hold the lease until grim's five-second deadline. Process
+    // exit alone took 671 ms on a loaded aarch64 runner, so the bound sits at 2 s: clear of
+    // that and clear of the deadline.
     assert!(
-        went.elapsed() < Duration::from_millis(500),
+        went.elapsed() < Duration::from_secs(2),
         "{:?}",
         went.elapsed()
     );
