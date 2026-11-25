@@ -755,6 +755,7 @@ impl Relay {
         if let Err(why) = self.writer.finish().await {
             leave(None, &why);
         }
+        self.log.flush().await;
         result
     }
 
@@ -792,11 +793,13 @@ impl Relay {
                 let error = self.lost_error("since the last call");
                 return self
                     .answer(&id, &method, asked.as_ref(), error)
+                    .await
                     .map_err(Stop::Writer);
             }
             if let Err(error) = self.reach(initializing).await? {
                 return self
                     .answer(&id, &method, asked.as_ref(), error)
+                    .await
                     .map_err(Stop::Writer);
             }
         }
@@ -869,10 +872,19 @@ impl Relay {
         let error = self.lost_error(how);
         self.engine = None;
         self.unreported = self.in_flight.is_empty();
-        for (id, method, asked) in std::mem::take(&mut self.in_flight).into_values() {
-            if let Some(asked) = &asked {
-                self.log.answered(asked, &error);
-            }
+        let in_flight = std::mem::take(&mut self.in_flight);
+        // Every line is queued first and waited for under one deadline, so a log that
+        // stalls holds the answers up once, not once per call.
+        let pending: Vec<_> = in_flight
+            .values()
+            .filter_map(|(_, _, asked)| asked.as_ref())
+            .map(|asked| self.log.queued(asked, &error))
+            .collect();
+        let by = Instant::now() + crate::audit::WRITE_LIMIT;
+        for line in pending {
+            line.wait(by).await;
+        }
+        for (id, method, _) in in_flight.into_values() {
             let line = envelope::answer(&id, &method, error.clone());
             tokio::select! {
                 biased;
@@ -897,7 +909,7 @@ impl Relay {
     }
 
     /// Answers the request `id` with `error`, logging it when it is the call `asked`.
-    fn answer(
+    async fn answer(
         &mut self,
         id: &Value,
         method: &str,
@@ -905,7 +917,7 @@ impl Relay {
         error: ToolError,
     ) -> Result<(), String> {
         if let Some(asked) = asked {
-            self.log.answered(asked, &error);
+            self.log.answered(asked, &error).await;
         }
         self.reply(envelope::answer(id, method, error))
     }

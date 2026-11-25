@@ -37,15 +37,18 @@ impl Unavailable {
     /// every other session.
     pub(crate) async fn run(self) -> Result<(), String> {
         let (input, _gone) = Incoming::new(tokio::io::stdin());
+        let log = self.log.clone();
         let service = self
             .serve((input, tokio::io::stdout()))
             .await
             .map_err(|error| format!("start MCP session: {error}"))?;
-        service
+        let served = service
             .waiting()
             .await
             .map(drop)
-            .map_err(|error| format!("MCP session: {error}"))
+            .map_err(|error| format!("MCP session: {error}"));
+        log.flush().await;
+        served
     }
 }
 
@@ -74,10 +77,6 @@ impl ServerHandler for Unavailable {
         Ok(ListToolsResult::with_all_items(self.tools.clone()))
     }
 
-    #[expect(
-        clippy::unused_async_trait_impl,
-        reason = "rmcp's handler methods return futures; this answer needs nothing awaited"
-    )]
     async fn call_tool(
         &self,
         request: CallToolRequestParams,
@@ -86,7 +85,7 @@ impl ServerHandler for Unavailable {
         let error = ToolError::new(ErrorName::EngineUnavailable, self.detail.clone());
         let client = context.client_info().map(|info| info.name);
         if let Some(asked) = self.log.asked(&request.name, client.as_deref()) {
-            self.log.answered(&asked, &error);
+            self.log.answered(&asked, &error).await;
         }
         Ok(error.into_result().into())
     }

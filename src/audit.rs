@@ -13,14 +13,20 @@
 //! Once the log reaches `ROTATE_AT`, the next write first moves it aside to
 //! `audit.jsonl.1`, shifting older ones up to `audit.jsonl.3` and dropping the oldest
 //! (`rotate`).
+//!
+//! Lines are written by a thread of the log's own, in the order calls finish, so a file
+//! system that stalls, as an NFS or FUSE state directory can, never holds up the runtime.
+//! A call waits at most `WRITE_LIMIT` for its line, and one that finds `QUEUE` lines
+//! waiting goes unlogged; both say so in `status.audit.last_error`.
 
 use std::borrow::Cow;
 use std::fs::{DirBuilder, OpenOptions, TryLockError};
 use std::io::Write as _;
 use std::os::unix::fs::{DirBuilderExt as _, OpenOptionsExt as _};
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex, PoisonError};
-use std::time::Instant;
+use std::sync::mpsc::{SyncSender, TrySendError};
+use std::sync::{Arc, Mutex, OnceLock, PoisonError};
+use std::time::{Duration, Instant};
 
 use chrono::{SecondsFormat, Utc};
 use niri_ipc::Action;
@@ -38,12 +44,53 @@ use crate::noctalia::Named;
 const ROTATE_AT: u64 = 10 * 1024 * 1024;
 /// How many logs moved aside are kept: `audit.jsonl.1`, the newest, to `audit.jsonl.3`.
 const KEPT: u32 = 3;
+/// How long a server on its way out waits to say its log is behind.
+const WARN_LIMIT: Duration = Duration::from_millis(100);
+
+/// How long a call waits for its line to be written before it goes on without.
+pub(crate) const WRITE_LIMIT: Duration = Duration::from_secs(1);
+/// How many lines may wait for the writer; a call that finds this many goes unlogged.
+const QUEUE: usize = 64;
+
+/// A line for the writer, and the sender it answers on once the line is written.
+type Job = (Vec<u8>, tokio::sync::oneshot::Sender<()>);
 
 /// Where the log goes, and the last write error, which `status` reports.
 #[derive(Debug, Clone)]
 pub(crate) struct Audit {
     path: Option<PathBuf>,
     last_error: Arc<Mutex<Option<String>>>,
+    /// The writer thread's queue, started with the first line; `None` if it couldn't be.
+    writer: Arc<OnceLock<Option<SyncSender<Job>>>>,
+}
+
+/// A line handed to the writer, to wait for.
+#[derive(Debug)]
+pub(crate) struct Pending {
+    audit: Audit,
+    /// Answered once the line is written; `None` when it never reached the writer.
+    written: Option<tokio::sync::oneshot::Receiver<()>>,
+}
+
+impl Pending {
+    /// Waits for the line until `by`. Past it the call goes on, and `status` says the
+    /// write is still pending.
+    pub(crate) async fn wait(self, by: tokio::time::Instant) {
+        let Some(written) = self.written else {
+            return;
+        };
+        let unlogged = match tokio::time::timeout_at(by, written).await {
+            Ok(Ok(())) => return,
+            Ok(Err(_)) => "the log's writer thread ended; this call went unlogged".to_owned(),
+            Err(_) => format!(
+                "a write took over {} s, as on a stalled file system; it is still pending",
+                WRITE_LIMIT.as_secs()
+            ),
+        };
+        if let Some(path) = &self.audit.path {
+            *self.audit.last() = Some(format!("{}: {unlogged}", path.display()));
+        }
+    }
 }
 
 /// One tool call, as written to the log.
@@ -130,6 +177,7 @@ impl Audit {
         Self {
             path: state_dir.map(|dir| dir.join("niri-computer-use").join("audit.jsonl")),
             last_error: Arc::new(Mutex::new(last_error)),
+            writer: Arc::default(),
         }
     }
 
@@ -145,14 +193,28 @@ impl Audit {
         }
     }
 
-    /// Logs a finished call: `args` is its metadata, and the outcome comes from `result`.
-    pub(crate) fn finish(
+    /// Logs a finished call, waiting at most `WRITE_LIMIT` for its line: `args` is its
+    /// metadata, and the outcome comes from `result`.
+    pub(crate) async fn finish(
+        &self,
+        call: &Call<'_>,
+        caller: Caller<'_>,
+        args: Value,
+        result: &Result<CallToolResult, ErrorData>,
+    ) {
+        let by = tokio::time::Instant::now() + WRITE_LIMIT;
+        self.queue(call, caller, args, result).wait(by).await;
+    }
+
+    /// Queues a finished call's line without waiting for it, for a caller that logs
+    /// several and waits for them under one deadline (`Pending::wait`).
+    pub(crate) fn queue(
         &self,
         call: &Call<'_>,
         caller: Caller<'_>,
         mut args: Value,
         result: &Result<CallToolResult, ErrorData>,
-    ) {
+    ) -> Pending {
         matched(&mut args, result);
         let reported = if call.action {
             reported(result)
@@ -160,7 +222,7 @@ impl Audit {
             Reported::default()
         };
         let summary = summarize(&reported, result);
-        self.write(&Record {
+        self.queue_record(&Record {
             ts: &call.ts,
             session: caller.session,
             instance: caller.instance,
@@ -173,26 +235,139 @@ impl Audit {
             error: summary.error,
             may_have_sent: may_have_sent(result),
             duration_ms: call.started.elapsed().as_millis(),
-        });
+        })
     }
 
-    /// Appends one line. A failure is kept for `status` and doesn't fail the tool call.
-    fn write(&self, record: &Record<'_>) {
-        let Some(path) = &self.path else {
-            return;
+    /// Appends one line through the writer, waiting at most `WRITE_LIMIT`.
+    #[cfg(test)]
+    async fn write(&self, record: &Record<'_>) {
+        let by = tokio::time::Instant::now() + WRITE_LIMIT;
+        self.queue_record(record).wait(by).await;
+    }
+
+    /// Queues one line for the writer. A failure is kept for `status` and doesn't fail
+    /// the tool call.
+    fn queue_record(&self, record: &Record<'_>) -> Pending {
+        let unqueued = Pending {
+            audit: self.clone(),
+            written: None,
         };
-        let result = serde_json::to_vec(record)
-            .map_err(|error| error.to_string())
-            .and_then(|line| append(path, &line, ROTATE_AT).map_err(|error| error.to_string()));
-        if let Err(error) = result {
-            *self.last() = Some(error);
+        let Some(path) = &self.path else {
+            return unqueued;
+        };
+        let line = match serde_json::to_vec(record) {
+            Ok(line) => line,
+            Err(error) => {
+                *self.last() = Some(error.to_string());
+                return unqueued;
+            }
+        };
+        match self.send(path, line) {
+            Ok(written) => Pending {
+                written: Some(written),
+                ..unqueued
+            },
+            Err(unlogged) => {
+                *self.last() = Some(format!("{}: {unlogged}", path.display()));
+                unqueued
+            }
         }
+    }
+
+    /// Hands `line` to the writer; an empty one is written as nothing, so waiting for it
+    /// waits for every line before it.
+    fn send(
+        &self,
+        path: &Path,
+        line: Vec<u8>,
+    ) -> Result<tokio::sync::oneshot::Receiver<()>, String> {
+        let Some(jobs) = self.writer(path) else {
+            return Err(
+                "the log's writer thread couldn't be started; calls go unlogged".to_owned(),
+            );
+        };
+        let (done, written) = tokio::sync::oneshot::channel();
+        match jobs.try_send((line, done)) {
+            Ok(()) => Ok(written),
+            Err(TrySendError::Full(_)) => Err(format!(
+                "{QUEUE} lines are waiting to be written, as on a stalled file system; this call went unlogged"
+            )),
+            Err(TrySendError::Disconnected(_)) => {
+                Err("the log's writer thread ended; this call went unlogged".to_owned())
+            }
+        }
+    }
+
+    /// Waits until every line queued so far is written, at most `WRITE_LIMIT`, for a
+    /// server about to exit: the writer is a thread the process doesn't wait for. A log
+    /// still behind says so on stderr, and this returns false.
+    pub(crate) async fn flush(&self) -> bool {
+        let (Some(path), Some(_started)) = (&self.path, self.writer.get()) else {
+            return true;
+        };
+        let by = tokio::time::Instant::now() + WRITE_LIMIT;
+        let flushed = tokio::time::timeout_at(by, async {
+            // A full queue takes the marker once the writer has room again.
+            let written = loop {
+                match self.send(path, Vec::new()) {
+                    Ok(written) => break written,
+                    Err(_) => tokio::time::sleep(Duration::from_millis(10)).await,
+                }
+            };
+            written.await.is_ok()
+        })
+        .await
+        .unwrap_or(false);
+        if !flushed {
+            let warning = format!(
+                "the audit log {} was still being written when the server ended; its last lines may be missing",
+                path.display()
+            );
+            let _written = crate::cli::print_error_within(warning, WARN_LIMIT).await;
+        }
+        flushed
+    }
+
+    /// The writer's queue, starting its thread for the first line.
+    fn writer(&self, path: &Path) -> Option<&SyncSender<Job>> {
+        self.writer
+            .get_or_init(|| {
+                let (jobs, queue) = std::sync::mpsc::sync_channel::<Job>(QUEUE);
+                let (path, last_error) = (path.to_owned(), Arc::clone(&self.last_error));
+                std::thread::Builder::new()
+                    .name("audit-writer".to_owned())
+                    .spawn(move || write_each(&queue, &path, &last_error))
+                    .ok()
+                    .map(|_thread| jobs)
+            })
+            .as_ref()
     }
 
     fn last(&self) -> std::sync::MutexGuard<'_, Option<String>> {
         self.last_error
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
+    }
+}
+
+/// The writer thread: appends each queued line to `path` in order, keeping a failure in
+/// `last_error`, and answers once it is written. It ends once every `Audit` sharing the
+/// queue is dropped.
+fn write_each(
+    queue: &std::sync::mpsc::Receiver<Job>,
+    path: &Path,
+    last_error: &Mutex<Option<String>>,
+) {
+    for (line, done) in queue {
+        if line.is_empty() {
+            let _ignored = done.send(());
+            continue;
+        }
+        if let Err(error) = append(path, &line, ROTATE_AT) {
+            *last_error.lock().unwrap_or_else(PoisonError::into_inner) = Some(error.to_string());
+        }
+        // The call may have stopped waiting; its line is written all the same.
+        let _ignored = done.send(());
     }
 }
 
@@ -591,17 +766,19 @@ mod tests {
         }
     }
 
-    #[test]
-    fn appends_one_private_line_per_call() {
+    #[tokio::test]
+    async fn appends_one_private_line_per_call() {
         let dir = crate::test_support::fresh_dir("audit");
         let audit = Audit::new(Some(dir.join("state")));
         let args = serde_json::json!({"target": "focused_output"});
-        audit.write(&record("screenshot", &args, None));
-        audit.write(&record(
-            "desktop_state",
-            &args,
-            Some("niri_unavailable".to_owned()),
-        ));
+        audit.write(&record("screenshot", &args, None)).await;
+        audit
+            .write(&record(
+                "desktop_state",
+                &args,
+                Some("niri_unavailable".to_owned()),
+            ))
+            .await;
         let path = dir.join("state/niri-computer-use/audit.jsonl");
         let lines: Vec<Value> = std::fs::read_to_string(&path)
             .unwrap()
@@ -626,13 +803,166 @@ mod tests {
         std::fs::remove_dir_all(dir).unwrap();
     }
 
-    #[test]
-    fn a_failed_write_is_kept_for_status() {
+    /// A FIFO at the log's path, which blocks the writer's open as a stalled NFS or FUSE
+    /// state directory would, and a reader that opens it once released, or after five
+    /// seconds whatever happens, so a regression fails the test rather than hanging it.
+    /// Each line is appended through an open of its own, so the reader opens the FIFO again
+    /// until it has read `lines`.
+    fn stalled_log(
+        name: &str,
+        lines: usize,
+    ) -> (
+        PathBuf,
+        Audit,
+        std::sync::mpsc::Sender<()>,
+        std::thread::JoinHandle<String>,
+    ) {
+        let dir = crate::test_support::fresh_dir(name);
+        let log = dir.join("niri-computer-use/audit.jsonl");
+        std::fs::create_dir_all(log.parent().unwrap()).unwrap();
+        rustix::fs::mknodat(
+            rustix::fs::CWD,
+            &log,
+            rustix::fs::FileType::Fifo,
+            rustix::fs::Mode::from_raw_mode(0o600),
+            0,
+        )
+        .unwrap();
+        let (release, released) = std::sync::mpsc::channel::<()>();
+        let reader = std::thread::spawn(move || {
+            let _released_or_timed_out = released.recv_timeout(Duration::from_secs(5));
+            read_fifo(&log, lines, Instant::now() + Duration::from_secs(10))
+        });
+        (dir.clone(), Audit::new(Some(dir)), release, reader)
+    }
+
+    /// Reads `lines` from the FIFO at `log`, or what came by `by`. Opened for reading and
+    /// writing, without blocking, it never waits for a writer, and a writer always finds
+    /// it open, so a line that never comes ends the read at `by` instead of hanging it.
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "runs on a thread of its own, never on the runtime"
+    )]
+    fn read_fifo(log: &Path, lines: usize, by: Instant) -> String {
+        use std::io::Read as _;
+        let nonblocking = i32::try_from(rustix::fs::OFlags::NONBLOCK.bits()).unwrap();
+        let mut fifo = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .custom_flags(nonblocking)
+            .open(log)
+            .unwrap();
+        let mut read = Vec::new();
+        let mut chunk = [0_u8; 4096];
+        while String::from_utf8_lossy(&read).lines().count() < lines && Instant::now() < by {
+            match fifo.read(&mut chunk) {
+                Ok(count) => read.extend_from_slice(&chunk[..count]),
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                    std::thread::sleep(Duration::from_millis(5));
+                }
+                Err(error) => panic!("{error}"),
+            }
+        }
+        String::from_utf8(read).unwrap()
+    }
+
+    /// A stalled log holds a call up for at most `WRITE_LIMIT`, and the line is written
+    /// once the file opens.
+    #[tokio::test]
+    async fn a_stalled_log_holds_a_call_up_for_at_most_its_limit() {
+        let (dir, audit, release, reader) = stalled_log("audit-stalled", 1);
+
+        let started = Instant::now();
+        audit.write(&record("status", &Value::Null, None)).await;
+        let took = started.elapsed();
+
+        release.send(()).ok();
+        let text = reader.join().unwrap();
+        assert!(took < WRITE_LIMIT + Duration::from_millis(500), "{took:?}");
+        let error = audit.status().last_error.unwrap_or_default();
+        assert!(error.contains("still pending"), "{error}");
+        assert!(text.contains("\"tool\":\"status\""), "{text}");
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// Lines queued together and waited for under one deadline, as a bridge answering
+    /// every call in flight does, hold it up once in all, and a flush before exit writes
+    /// every one of them once the log opens.
+    #[tokio::test]
+    async fn lines_waited_for_under_one_deadline_hold_it_up_once() {
+        let (dir, audit, release, reader) = stalled_log("audit-stalled-many", 3);
+        let caller = Caller {
+            session: "smoke/1",
+            instance: None,
+        };
+        let refused = ToolError::new(ErrorName::EngineLost, "the engine ended").into_result();
+
+        let started = Instant::now();
+        let pending: Vec<Pending> = (0..3)
+            .map(|_| {
+                audit.queue(
+                    &Call::action("key"),
+                    caller,
+                    json!({}),
+                    &Ok(refused.clone()),
+                )
+            })
+            .collect();
+        let by = tokio::time::Instant::now() + WRITE_LIMIT;
+        for line in pending {
+            line.wait(by).await;
+        }
+        let took = started.elapsed();
+        release.send(()).ok();
+        audit.flush().await;
+
+        let text = reader.join().unwrap();
+        assert!(took < WRITE_LIMIT + Duration::from_millis(500), "{took:?}");
+        assert_eq!(text.lines().count(), 3, "{text}");
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// A flush that finds the queue full, behind a log that opens again within its
+    /// limit, waits for the writer to make room rather than giving up at once.
+    #[tokio::test]
+    async fn a_flush_behind_a_full_queue_waits_for_room() {
+        let lines = QUEUE + 1;
+        let (dir, audit, release, reader) = stalled_log("audit-full", lines);
+        let caller = Caller {
+            session: "smoke/1",
+            instance: None,
+        };
+        let refused = ToolError::new(ErrorName::EngineLost, "the engine ended").into_result();
+        let queue = || {
+            audit.queue(
+                &Call::action("key"),
+                caller,
+                json!({}),
+                &Ok(refused.clone()),
+            )
+        };
+        // One line the writer holds in its open, and a full queue behind it.
+        let first = queue();
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        let queued: Vec<Pending> = (1..lines).map(|_| queue()).collect();
+
+        release.send(()).ok();
+        let caught_up = audit.flush().await;
+
+        drop((first, queued));
+        let text = reader.join().unwrap();
+        assert!(caught_up);
+        assert_eq!(text.lines().count(), lines);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_failed_write_is_kept_for_status() {
         let dir = crate::test_support::fresh_dir("audit-fail");
         // A file where the log's directory should be.
         std::fs::write(dir.join("niri-computer-use"), "").unwrap();
         let audit = Audit::new(Some(dir.clone()));
-        audit.write(&record("status", &Value::Null, None));
+        audit.write(&record("status", &Value::Null, None)).await;
         assert!(audit.status().last_error.is_some());
         assert_eq!(
             Audit::new(None).status().last_error.as_deref(),
@@ -671,7 +1001,7 @@ mod tests {
             std::env::current_exe().unwrap(),
             crate::runner::Search::Own,
             &args,
-            std::time::Duration::from_secs(30),
+            Duration::from_secs(30),
             64 * 1024,
         )
         .await
@@ -811,8 +1141,8 @@ mod tests {
 
     /// A stale lock read refuses after the `expect` check passed, and its detail can name
     /// the window; the line keeps only the error's name and the bounded arguments.
-    #[test]
-    fn a_stale_lock_read_is_logged_by_name_with_bounded_arguments() {
+    #[tokio::test]
+    async fn a_stale_lock_read_is_logged_by_name_with_bounded_arguments() {
         let dir = crate::test_support::fresh_dir("audit-stale");
         let audit = Audit::new(Some(dir.clone()));
         let caller = Caller {
@@ -825,7 +1155,9 @@ mod tests {
             "expect": expect(&Expect::App(marker.to_owned())),
         });
         let stale = ToolError::new(ErrorName::LockStale, format!("read before {marker}"));
-        audit.finish(&Call::action("key"), caller, args, &Ok(stale.into_result()));
+        audit
+            .finish(&Call::action("key"), caller, args, &Ok(stale.into_result()))
+            .await;
         let text = std::fs::read_to_string(dir.join("niri-computer-use/audit.jsonl")).unwrap();
         assert!(!text.contains(marker), "{text}");
         let line: Value = serde_json::from_str(text.trim_end()).unwrap();
@@ -842,8 +1174,8 @@ mod tests {
 
     /// A failure after input went out, or may have, says so in its result and in its audit
     /// line, so neither an agent nor the user takes it for one that sent nothing.
-    #[test]
-    fn a_failure_that_may_have_sent_input_says_so_in_its_result_and_line() {
+    #[tokio::test]
+    async fn a_failure_that_may_have_sent_input_says_so_in_its_result_and_line() {
         let dir = crate::test_support::fresh_dir("audit-may-have-sent");
         let audit = Audit::new(Some(dir.clone()));
         let caller = Caller {
@@ -857,7 +1189,9 @@ mod tests {
         for error in [sent, plain] {
             let result = error.into_result();
             results.push(result.structured_content.clone().unwrap());
-            audit.finish(&Call::action("key"), caller, json!({}), &Ok(result));
+            audit
+                .finish(&Call::action("key"), caller, json!({}), &Ok(result))
+                .await;
         }
         assert_eq!(results[0]["may_have_sent"], true, "{}", results[0]);
         assert_eq!(results[1].get("may_have_sent"), None, "{}", results[1]);
@@ -985,8 +1319,8 @@ mod tests {
         );
     }
 
-    #[test]
-    fn actions_log_what_was_accepted_and_observed() {
+    #[tokio::test]
+    async fn actions_log_what_was_accepted_and_observed() {
         let dir = crate::test_support::fresh_dir("audit-action");
         let audit = Audit::new(Some(dir.clone()));
         let caller = Caller {
@@ -997,20 +1331,26 @@ mod tests {
         let done = CallToolResult::structured(serde_json::json!({
             "accepted": true, "observed": "focused", "focused_window": 4
         }));
-        audit.finish(
-            &Call::action("focus"),
-            caller,
-            args.clone(),
-            &Ok(done.clone()),
-        );
-        audit.finish(
-            &Call::start("desktop_state"),
-            caller,
-            args.clone(),
-            &Ok(done),
-        );
+        audit
+            .finish(
+                &Call::action("focus"),
+                caller,
+                args.clone(),
+                &Ok(done.clone()),
+            )
+            .await;
+        audit
+            .finish(
+                &Call::start("desktop_state"),
+                caller,
+                args.clone(),
+                &Ok(done),
+            )
+            .await;
         let refused = ToolError::new(ErrorName::LeaseRequired, "no").into_result();
-        audit.finish(&Call::action("focus"), caller, args, &Ok(refused));
+        audit
+            .finish(&Call::action("focus"), caller, args, &Ok(refused))
+            .await;
         let lines: Vec<Value> = std::fs::read_to_string(dir.join("niri-computer-use/audit.jsonl"))
             .unwrap()
             .lines()
@@ -1031,8 +1371,8 @@ mod tests {
         std::fs::remove_dir_all(dir).unwrap();
     }
 
-    #[test]
-    fn a_change_report_is_logged_as_counts_without_titles_or_names() {
+    #[tokio::test]
+    async fn a_change_report_is_logged_as_counts_without_titles_or_names() {
         let dir = crate::test_support::fresh_dir("audit-changes");
         let audit = Audit::new(Some(dir.clone()));
         let caller = Caller {
@@ -1058,13 +1398,17 @@ mod tests {
             "changes": {"elements": {"window_id": 1, "unknown": "not_accessible", "detail": "DETAIL-SENTINEL"}}
         }));
         let args = serde_json::json!({});
-        audit.finish(
-            &Call::action("activate_element"),
-            caller,
-            args.clone(),
-            &Ok(reported),
-        );
-        audit.finish(&Call::action("key"), caller, args, &Ok(unknown));
+        audit
+            .finish(
+                &Call::action("activate_element"),
+                caller,
+                args.clone(),
+                &Ok(reported),
+            )
+            .await;
+        audit
+            .finish(&Call::action("key"), caller, args, &Ok(unknown))
+            .await;
         let text = std::fs::read_to_string(dir.join("niri-computer-use/audit.jsonl")).unwrap();
         assert!(!text.contains("SENTINEL"), "{text}");
         let lines: Vec<Value> = text

@@ -4,18 +4,19 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## Unreleased
 
+### Changed
+
+- The skill and the server's instructions tell agents that everything they read on the desktop, web pages, window titles, accessible names and the clipboard included, is data, never instructions, and to ask the user before doing what a page asks. The safety page says what that guidance can't promise.
+- rmcp 3.11.0. Before 3.9.0, rmcp's HTTP clients had an unbounded read (RUSTSEC-2026-0462); the server uses only stdio, which wasn't affected.
+- zbus 6.3.0, which merged the unmaintained `zvariant`, `zbus_names` and `zvariant_derive` crates into zbus; the accessibility tools behave as before.
+
 ### Fixed
 
 - The install script checks `NCU_REGISTER` before it downloads anything. A wrong value used to fail the run after the new binary, skill and plugin were already in place.
 - Two runs of the install script at once take turns under a lock instead of removing each other's staged copies, and a run stopped while it replaces the skill or the plugin puts the previous one back instead of leaving none. The script now needs util-linux's `flock`.
 - After an update, the install script names the servers still running the replaced build when the binary's directory is reached through a link, as `/home` is on Fedora Atomic.
 - An accessibility call that waits for another call still connecting to the accessibility bus gives up at its own budget. `wait_for` an element could run up to a second past its timeout.
-
-### Changed
-
-- The skill and the server's instructions tell agents that everything they read on the desktop, web pages, window titles, accessible names and the clipboard included, is data, never instructions, and to ask the user before doing what a page asks. The safety page says what that guidance can't promise.
-- rmcp 3.11.0. Before 3.9.0, rmcp's HTTP clients had an unbounded read (RUSTSEC-2026-0462); the server uses only stdio, which wasn't affected.
-- zbus 6.3.0, which merged the unmaintained `zvariant`, `zbus_names` and `zvariant_derive` crates into zbus; the accessibility tools behave as before.
+- A state or capture directory on a file system that stalls, such as NFS or FUSE, no longer freezes every session of the server. The audit log is written by a thread of its own and a call waits for its line at most a second; a saved screenshot is written off the runtime and fails with `deadline_exceeded` after five seconds.
 
 ## 0.1.8 - 2026-11-04
 

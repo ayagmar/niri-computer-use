@@ -81,6 +81,7 @@ pub(crate) async fn run(env: Env, unscoped: Option<String>) -> Result<(), String
     unlink_own_socket(&runtime, bound);
     engine.end_sessions().await;
     control::cleanup::settled().await;
+    let _caught_up = engine.audit().flush().await;
     drop(lock);
     served
 }
@@ -135,6 +136,7 @@ where
 {
     let served = serve_session(engine, session, input, output).await;
     control::cleanup::settled().await;
+    let _caught_up = engine.audit().flush().await;
     served
 }
 

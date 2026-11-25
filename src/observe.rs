@@ -289,11 +289,12 @@ pub(crate) async fn save(
         ..request.clone()
     };
     let shot = screenshot(socket, display, place, &request).await?;
-    let path = save::write(save, &shot.image)?;
+    let (width, height) = (shot.metadata.width, shot.metadata.height);
+    let path = save::write_off_runtime(save, shot.image).await?;
     Ok(Saved {
         path,
-        width: shot.metadata.width,
-        height: shot.metadata.height,
+        width,
+        height,
     })
 }
 
