@@ -7,6 +7,7 @@ All notable changes to this project are documented here. The format follows [Kee
 ### Changed
 
 - rmcp 3.11.0. Before 3.9.0, rmcp's HTTP clients had an unbounded read (RUSTSEC-2026-0462); the server uses only stdio, which wasn't affected.
+- zbus 6.3.0, which merged the unmaintained `zvariant`, `zbus_names` and `zvariant_derive` crates into zbus; the accessibility tools behave as before.
 
 ## 0.1.8 - 2026-11-04
 
