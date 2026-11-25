@@ -1,4 +1,4 @@
-.PHONY: check check-static test test-shared test-plugin stall stall-standalone stall-shared perf lint coverage inspect inspect-check nested nested-control nested-actions nested-input nested-shell nested-a11y nested-engine nested-measure nested-latency nested-chromium nested-chromium-headless nested-chromium-a11y nested-big nested-compat nested-multi nested-overlay niri-matrix nested-upgrade nested-eval nested-demo sitting host-capture
+.PHONY: check check-static test test-shared test-plugin stall stall-standalone stall-shared perf lint coverage inspect inspect-check nested nested-control nested-actions nested-input nested-shell nested-a11y nested-engine nested-measure nested-latency nested-chromium nested-chromium-headless nested-chromium-a11y nested-big nested-compat nested-multi nested-overlay nested-desk niri-matrix nested-upgrade nested-eval nested-demo sitting host-capture
 
 SCALE ?= 1
 NESTED_FLAGS = $(if $(VISIBLE),--visible) $(if $(SHARED),--shared) $(if $(NIRI),--niri $(NIRI))
@@ -114,6 +114,12 @@ nested-chromium-a11y:
 nested-big:
 	cargo build --locked --release -p niri-computer-use
 	cargo run --locked -p harness -- run $(NESTED_FLAGS) --big --server target/release/niri-computer-use
+
+# A background desk inside the nested niri, always headless: a desk, a GTK 4 entry typed
+# into inside it, the nested niri left as it was, and the stop key.
+nested-desk:
+	cargo build --locked -p niri-computer-use
+	cargo run --locked -p harness -- run $(if $(SHARED),--shared) $(if $(NIRI),--niri $(NIRI)) --desk
 
 # What the server does on one niri version: make nested-compat NIRI=<path to a niri binary>
 nested-compat:

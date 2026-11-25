@@ -32,6 +32,9 @@ const SESSION_BINARIES: [&str; 2] = ["grim", "notify-send"];
 pub(crate) struct Status {
     /// The basename of `NIRI_SOCKET`, which names the compositor instance.
     instance: Option<String>,
+    /// The desk this server works on, null on the host session. A desk's lock state and
+    /// stop key are the host's.
+    desk: Option<String>,
     /// Where the runtime directory, niri's socket and the display came from: the
     /// environment, or discovery, or why neither.
     discovery: discover::Sources,
@@ -43,7 +46,8 @@ pub(crate) struct Status {
     display_error: Option<ToolError>,
     niri: Niri,
     lease: LeaseStatus,
-    /// Whether the stop flag is set for this niri instance.
+    /// Whether the stop flag is set for this niri instance or, for a desk, the host-wide
+    /// one.
     stop: bool,
     /// Whether niri's config binds a key to `niri-computer-use stop`: `bound`,
     /// `not_found`, or `unknown` when that can't be told for sure.
@@ -247,20 +251,21 @@ pub(crate) async fn collect(env: &Env, sources: Sources<'_>) -> Status {
             None
         }
     };
-    let (version, outputs, noctalia, logind, stop_key, desktop_entries) = tokio::join!(
+    let (version, outputs, noctalia, reading, stop_key, desktop_entries) = tokio::join!(
         niri::version(socket),
         niri::outputs(socket),
         noctalia,
-        control::logind(socket, &env.desktop),
-        stop_key_of(reader, socket, config_failed),
+        control::Reading::of(env),
+        stop_key_of(reader, &env.host_niri, config_failed),
         apps::listing(policy, apps, place)
     );
     let noctalia_status = noctalia.as_ref().and_then(|reply| reply.as_ref().ok());
-    let lock = control::lock(logind, noctalia_status);
+    let lock = reading.lock(noctalia_status);
     let display_error = env.display.checked(socket).await.err();
     let (presence, noctalia_error) = presence(noctalia);
     Status {
         instance: env.instance(),
+        desk: env.desk().map(|desk| desk.name.as_str().to_owned()),
         discovery: env.discovery.clone(),
         engine,
         display_error,
@@ -422,6 +427,7 @@ mod tests {
             status,
             serde_json::json!({
                 "instance": null,
+                "desk": null,
                 "discovery": {
                     "runtime_dir": {"source": "missing", "detail": "XDG_RUNTIME_DIR is not set"},
                     "niri_socket": {"source": "missing", "detail": "NIRI_SOCKET is not set"},
@@ -429,10 +435,7 @@ mod tests {
                     "warning": null
                 },
                 "engine": null,
-                "display_error": {
-                    "error": "upstream_error",
-                    "detail": "WAYLAND_DISPLAY is not set"
-                },
+                "display_error": {"error": "upstream_error", "detail": "WAYLAND_DISPLAY is not set"},
                 "niri": {
                     "version": null,
                     "ipc_crate": "26.4.0",

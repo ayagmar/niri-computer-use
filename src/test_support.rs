@@ -33,6 +33,17 @@ pub(crate) fn fresh_dir(name: &str) -> PathBuf {
     dir
 }
 
+/// A `fresh_dir` with a name short enough for a desk's sockets below it.
+pub(crate) fn short_dir(tag: &str) -> PathBuf {
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .subsec_nanos();
+    let dir = std::env::temp_dir().join(format!("ncu-{tag}-{}-{nanos}", std::process::id()));
+    std::fs::create_dir(&dir).unwrap();
+    dir
+}
+
 /// Writes `body` as an executable shell script at `file`. The `install` child writes it,
 /// so this process never holds the file open for writing: a test spawning a program on
 /// another thread meanwhile would inherit that handle, and running the script would fail
@@ -73,6 +84,46 @@ pub(crate) fn niri_env(dir: &std::path::Path) -> crate::Env {
         instance: crate::control::runtime::Instance::resolve(&socket, euid),
         runtime_dir: Some(dir.to_path_buf()),
         ..crate::Env::default()
+    }
+}
+
+/// The environment of a desk's server whose desk `web` has its niri socket `niri.test.sock`
+/// in `dir/ncu-d/web`, set up as `niri_env` does, for a host session whose runtime
+/// directory is `dir`: the host's niri at `host_niri`, its lock read from `lock`, the
+/// host-wide stop flag at `dir/ncu-d/stop.flag`.
+pub(crate) fn desk_env(
+    dir: &std::path::Path,
+    host_niri: PathBuf,
+    lock: crate::desks::record::LockSources,
+) -> crate::Env {
+    use crate::desks::{join, layout, name, record};
+    let desks = layout::Desks::of(dir);
+    let root = desks.path().join("web");
+    std::fs::create_dir_all(&root).unwrap();
+    let env = niri_env(&root);
+    let joined = join::Joined {
+        name: name::DeskName::parse("web").unwrap(),
+        endpoints: record::Endpoints {
+            niri_socket: root.join("niri.test.sock"),
+            wayland_display: "wayland-1".to_owned(),
+            session_bus: "unix:path=/nowhere".to_owned(),
+            accessibility_bus: "unix:path=/nowhere".to_owned(),
+        },
+        root,
+        host: record::Host {
+            runtime_dir: dir.to_path_buf(),
+            niri_socket: Some(host_niri.clone()),
+            wayland_display: Some("wayland-0".to_owned()),
+            session_bus: None,
+            lock,
+        },
+        stop_flag: desks.stop_flag(),
+    };
+    crate::Env {
+        place: join::Place::Desk(Box::new(joined)),
+        host_niri: crate::niri::Socket::at(host_niri),
+        wayland_display: Some("wayland-1".into()),
+        ..env
     }
 }
 

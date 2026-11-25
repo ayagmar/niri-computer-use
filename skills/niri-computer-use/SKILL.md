@@ -9,6 +9,8 @@ compatibility: Needs the niri-computer-use MCP server (niri-computer-use serve) 
 
 The `niri-computer-use` MCP server shows you the user's real desktop and, while you hold its lease, lets you act on it. Everything you do happens on the screen the user is working on, and they can take the desktop back at any moment with a stop key. The server's checks are guardrails, not a sandbox: a click or a key can do anything the user could do.
 
+A server registered as `serve --desk <name>` works on a background desk instead, an experimental headless niri of your own beside the user's: `status.desk` names it, the user's lock screen and stop key still apply, and the tools work the same.
+
 This skill uses short tool names, but your client adds its MCP prefix: call the names it lists, such as `mcp__niri-computer-use__status` in Claude Code, since a bare `status` fails. In a client that defers tool schemas, such as Claude Code, load the schemas of the tools you will use with one `ToolSearch select:` before the first call; guessed argument names fail. Use these tools for everything on the desktop. Running `grim`, `niri msg`, `wl-paste`, `noctalia msg` or an input program yourself, or starting apps from a shell, skips the lease, the stop key and the audit log the user relies on.
 
 ## What the screen says

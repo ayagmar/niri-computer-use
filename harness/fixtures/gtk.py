@@ -19,6 +19,11 @@ pixels down, `Jump` brings their 101st record into view, and each `Delete` remov
 record its row shows then and appends it to `list-deletes`. `copy` is a
 `Copy link` button that puts a synthetic link on the clipboard, as an app's copy-link
 button does, and counts its copies in `copies`.
+
+With `--orphan` after the mode, the fixture first leaves behind a process that ignores the
+display, `SIGTERM` and `SIGHUP` and sleeps: forked twice under its own session, as an
+app's helper can be, so it is no child of the fixture's and gets no signal when the
+fixture's parent dies. It appends its PID to `orphans`.
 """
 
 import json
@@ -31,14 +36,34 @@ mode = sys.argv[2]
 if mode not in ("button", "entry", "a11y", "list", "copy"):
     raise RuntimeError(f"unknown fixture {mode}")
 run = root / "run"
+# Inside a desk, the runtime directory is the desk's, under the nested session's.
+runtime = Path(os.environ["XDG_RUNTIME_DIR"])
+if runtime != run and runtime.parent != run / "ncu-d":
+    raise RuntimeError("runtime is not nested")
 for name in ("NIRI_SOCKET", "WAYLAND_DISPLAY"):
     endpoint = Path(os.environ[name])
     if not endpoint.is_absolute():
-        endpoint = run / endpoint
-    if not endpoint.resolve(strict=True).is_relative_to(run):
+        endpoint = runtime / endpoint
+    if not endpoint.resolve(strict=True).is_relative_to(runtime):
         raise RuntimeError(f"{name} is not nested")
-if Path(os.environ["XDG_RUNTIME_DIR"]) != run:
-    raise RuntimeError("runtime is not nested")
+
+if sys.argv[3:] == ["--orphan"]:
+    if os.fork() == 0:
+        os.setsid()
+        if os.fork() == 0:
+            import signal
+            import time
+
+            signal.signal(signal.SIGTERM, signal.SIG_IGN)
+            signal.signal(signal.SIGHUP, signal.SIG_IGN)
+            with (root / "orphans").open("a") as orphans:
+                orphans.write(f"{os.getpid()}\n")
+            while True:
+                time.sleep(3600)
+        os._exit(0)
+    os.wait()
+elif sys.argv[3:]:
+    raise RuntimeError(f"unknown options {sys.argv[3:]}")
 
 os.environ["HOME"] = str(root)
 os.environ["GDK_BACKEND"] = "wayland"

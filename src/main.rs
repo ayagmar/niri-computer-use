@@ -11,6 +11,7 @@ mod clipboard;
 mod confirm;
 mod control;
 mod coords;
+mod desks;
 mod discover;
 mod elements;
 mod engine;
@@ -44,7 +45,7 @@ use std::process::ExitCode;
 
 use crate::control::runtime::RuntimeDir;
 
-const USAGE: &str = "usage: niri-computer-use serve | status [--check] | stop | resume | recover | watch | engine | guard <server-pid> | paste-keeper | --version";
+const USAGE: &str = "usage: niri-computer-use serve | status [--check] | stop | resume | recover | watch, each but stop and resume with an optional --desk <name> | desk start [--windowed] [--size WIDTHxHEIGHT] <name> | desk stop <name> | desk list | engine | guard <server-pid> | paste-keeper | --version";
 
 /// What the server reads from its environment, once at startup. An empty variable
 /// counts as unset.
@@ -69,6 +70,11 @@ pub(crate) struct Env {
     pub(crate) session_bus: Option<OsString>,
     /// Where the runtime directory, niri's socket and the display came from.
     pub(crate) discovery: discover::Sources,
+    /// The host session, or the desk this server works on.
+    pub(crate) place: desks::join::Place,
+    /// The niri of the owner's session, whose lock state and stop key count: `niri_socket`
+    /// on the host, the host's niri for a desk.
+    pub(crate) host_niri: niri::Socket,
 }
 
 impl Env {
@@ -109,6 +115,7 @@ impl Env {
             (Err(_), found) => found.map_or_else(niri::Socket::unknown, niri::Socket::at),
         };
         let mut env = Self {
+            host_niri: niri_socket.clone(),
             niri_socket,
             instance: session.instance,
             desktop: runner::Desktop::default(),
@@ -128,9 +135,73 @@ impl Env {
                 .map(PathBuf::from)
                 .or_else(|| var("HOME").map(|home| PathBuf::from(home).join(".local/state"))),
             discovery: session.sources,
+            place: desks::join::Place::Host,
         };
         env.display = niri::Display::new(env.wayland_socket());
         env
+    }
+
+    /// The environment of the desk `name` of the host session `self` describes, once it is
+    /// ready: the desk's runtime directory, niri, display and session bus in place of the
+    /// host's, everything else the host's. Fails, having started nothing, when the desk
+    /// isn't ready; never falls back to the host.
+    async fn join(
+        self,
+        name: &desks::name::DeskName,
+        probe: discover::Probe,
+    ) -> Result<Self, String> {
+        self.join_with(
+            name,
+            probe,
+            |var| std::env::var_os(var),
+            &discover::Roots::host(),
+        )
+        .await
+    }
+
+    /// `join`, with the server's own variables from `var` and the session discovered under
+    /// `roots`.
+    async fn join_with(
+        self,
+        name: &desks::name::DeskName,
+        probe: discover::Probe,
+        var: impl Fn(&str) -> Option<OsString> + Sync,
+        roots: &discover::Roots<'_>,
+    ) -> Result<Self, String> {
+        let runtime = self
+            .runtime_dir
+            .as_deref()
+            .ok_or_else(|| format!("XDG_RUNTIME_DIR isn't known, so desk {name} can't be found"))?;
+        let joined = desks::join::join(runtime, name, desks::cli::alive)?;
+        let overlay = joined.overlay();
+        let env = Self::from_vars(
+            |key| overlay.get(key).cloned().or_else(|| var(key)),
+            roots,
+            probe,
+        )
+        .await;
+        let host_niri = joined.host.niri_socket.clone().map_or_else(
+            || niri::Socket::unknown("the desk's record of its host names no niri socket"),
+            niri::Socket::at,
+        );
+        Ok(Self {
+            // A desk has no shell of its own; the host's Noctalia is read for the lock only.
+            desktop: runner::Desktop {
+                noctalia: None,
+                ..self.desktop
+            },
+            place: desks::join::Place::Desk(Box::new(joined)),
+            host_niri,
+            ..env
+        })
+    }
+
+    /// The desk this server works on, if any.
+    pub(crate) fn desk(&self) -> Option<&desks::join::Joined> {
+        match &self.place {
+            desks::join::Place::Host => None,
+            desks::join::Place::Desk(joined) => Some(joined),
+        }
     }
 
     /// The file name of niri's socket, resolved when it could be, which names the compositor
@@ -168,6 +239,9 @@ impl Env {
 
     /// The session variables as found, for the server's children.
     fn session_vars(&self) -> Vec<(&'static str, OsString)> {
+        if let Some(desk) = self.desk() {
+            return desk.children();
+        }
         let socket = self
             .niri_socket
             .path()
@@ -211,6 +285,9 @@ enum Command {
     PasteKeeper,
     /// Print what agents are doing on this niri instance as JSON lines, for a shell.
     Watch,
+    /// A background desk's lifecycle: `desk start`, `stop` and `list`, and the
+    /// supervisor's own subcommands.
+    Desk(desks::cli::Command),
     /// Print the version.
     Version,
 }
@@ -218,17 +295,43 @@ enum Command {
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> ExitCode {
     let args: Vec<OsString> = std::env::args_os().skip(1).collect();
-    let command = command(&args);
+    let (command, desk) = match command(&args) {
+        Ok(command) => command,
+        Err(message) => {
+            cli::print_error(&message);
+            return ExitCode::FAILURE;
+        }
+    };
     if command == Some(Command::Version) {
         cli::say(concat!("niri-computer-use ", env!("CARGO_PKG_VERSION")));
         return ExitCode::SUCCESS;
+    }
+    if let Some(Command::Desk(subcommand)) = &command
+        && let Some(code) = desk_process(subcommand).await
+    {
+        return code;
     }
     // The flag commands must work while niri hangs, and pick only where a flag goes.
     let probe = match command {
         Some(Command::Stop | Command::Resume | Command::Watch) => discover::Probe::Offline,
         _ => discover::Probe::Connect,
     };
-    let mut env = Env::read(probe).await;
+    let mut env = match desk {
+        None => Env::read(probe).await,
+        // The host is read without connecting to anything: only its runtime directory and
+        // what the desk's server keeps of it are used.
+        Some(name) => match Env::read(discover::Probe::Offline)
+            .await
+            .join(&name, probe)
+            .await
+        {
+            Ok(env) => env,
+            Err(message) => {
+                cli::print_error(&message);
+                return ExitCode::FAILURE;
+            }
+        },
+    };
     if let Some(Command::Engine(start)) = &command
         && start.runtime_dir_discovered
     {
@@ -241,17 +344,14 @@ async fn main() -> ExitCode {
     }
     let result = match command {
         Some(Command::Serve) => serve(env, given).await,
-        Some(Command::Stop) => RuntimeDir::of(&env).and_then(|runtime| {
-            runtime.stop().map_err(|error| {
-                format!("set the stop flag in {}: {error}", runtime.path().display())
-            })
-        }),
-        Some(Command::Resume) => RuntimeDir::of(&env).and_then(|runtime| runtime.resume()),
+        Some(Command::Stop) => stop(&env),
+        Some(Command::Resume) => resume(&env),
         Some(Command::Recover) => control::recover::run(&env).await,
         Some(Command::Watch) => watch::run(&env).await,
         Some(Command::Engine(start)) => engine::host::run(env, start.unscoped).await,
         Some(Command::Guard(server)) => control::guard::run(&env, server).await,
         Some(Command::PasteKeeper) => input::keeper::run(&env).await,
+        Some(Command::Desk(subcommand)) => desks::cli::run(&env, subcommand).await,
         Some(Command::Version | Command::Status { .. }) | None => Err(USAGE.to_owned()),
     };
     match result {
@@ -263,6 +363,36 @@ async fn main() -> ExitCode {
     }
 }
 
+/// `stop`: sets the stop flag of this niri instance and the host-wide one every desk's
+/// server checks, each even when the other can't be set.
+fn stop(env: &Env) -> Result<(), String> {
+    let desks = desks::cli::desks(env).and_then(|desks| {
+        desks.stop().map_err(|error| {
+            format!(
+                "set the desks' stop flag {}: {error}",
+                desks.stop_flag().display()
+            )
+        })
+    });
+    let host = RuntimeDir::of(env).and_then(|runtime| {
+        runtime
+            .stop()
+            .map_err(|error| format!("set the stop flag in {}: {error}", runtime.path().display()))
+    });
+    match (host, desks) {
+        (Ok(()), Ok(())) => Ok(()),
+        (Err(error), Ok(())) | (Ok(()), Err(error)) => Err(error),
+        (Err(host), Err(desks)) => Err(format!("{host}; {desks}")),
+    }
+}
+
+/// `resume`: clears this niri instance's stop flag, which it refuses while its input-dirty
+/// marker is set, and only then the host-wide one. No desk's input-dirty marker is touched.
+fn resume(env: &Env) -> Result<(), String> {
+    RuntimeDir::of(env)?.resume()?;
+    desks::cli::desks(env)?.resume()
+}
+
 /// The `status` subcommand: the report as JSON, or with `check` as text that fails while
 /// anything blocks the server.
 async fn status(env: &Env, given: session::Given, check: bool) -> ExitCode {
@@ -272,7 +402,7 @@ async fn status(env: &Env, given: session::Given, check: bool) -> ExitCode {
     let sources = status::Sources {
         engine: None,
         event_stream: None,
-        config_failed: niri::config_failed(&env.niri_socket).await.ok(),
+        config_failed: niri::config_failed(&env.host_niri).await.ok(),
         stop_key: Some(&stop_key::Reader::default()),
         lease_notice_error: None,
         audit: &audit,
@@ -306,7 +436,80 @@ async fn status(env: &Env, given: session::Given, check: bool) -> ExitCode {
     }
 }
 
-fn command(args: &[OsString]) -> Option<Command> {
+/// A desk process's own first steps, which must not discover the session or connect to
+/// niri: `desk exec` becomes the desk's program, and `desk hold` waits for cage to end.
+async fn desk_process(command: &desks::cli::Command) -> Option<ExitCode> {
+    match command {
+        desks::cli::Command::Exec {
+            parent,
+            death,
+            program,
+            args,
+        } => {
+            cli::print_error(&runner::desk::exec_dying_with(
+                *parent, *death, program, args,
+            ));
+            Some(ExitCode::FAILURE)
+        }
+        desks::cli::Command::Hold => match desks::hold::run(|name| std::env::var_os(name)).await {
+            Ok(()) => Some(ExitCode::SUCCESS),
+            Err(error) => {
+                cli::print_error(&error);
+                Some(ExitCode::FAILURE)
+            }
+        },
+        desks::cli::Command::Guard {
+            supervisor,
+            name,
+            generation,
+        } => match desks::guard::run(*supervisor, name, generation).await {
+            Ok(()) => Some(ExitCode::SUCCESS),
+            Err(error) => {
+                cli::print_error(&error);
+                Some(ExitCode::FAILURE)
+            }
+        },
+        desks::cli::Command::Start { .. }
+        | desks::cli::Command::Stop(_)
+        | desks::cli::Command::List
+        | desks::cli::Command::Supervise { .. } => None,
+    }
+}
+
+/// The subcommand `args` name, `None` when they name none, and the desk a trailing
+/// `--desk <name>` names; an error says what is wrong with a desk's name or a `desk`
+/// subcommand's arguments.
+fn command(args: &[OsString]) -> Result<(Option<Command>, Option<desks::name::DeskName>), String> {
+    if let [first, rest @ ..] = args
+        && first == "desk"
+    {
+        return desks::cli::parse(rest).map(|subcommand| (Some(Command::Desk(subcommand)), None));
+    }
+    let [rest @ .., flag, name] = args else {
+        return Ok((known(args), None));
+    };
+    if flag != DESK {
+        return Ok((known(args), None));
+    }
+    let name = desks::name::DeskName::parse(&name.to_string_lossy())?;
+    match known(rest) {
+        Some(
+            command @ (Command::Serve
+            | Command::Status { .. }
+            | Command::Watch
+            | Command::Recover
+            | Command::Engine(_)),
+        ) => Ok((Some(command), Some(name))),
+        _ => Err(format!(
+            "{DESK} goes after serve, status, watch or recover; `stop` and `resume` act on the host and every desk at once"
+        )),
+    }
+}
+
+/// The flag that names the desk a subcommand works on.
+pub(crate) const DESK: &str = "--desk";
+
+fn known(args: &[OsString]) -> Option<Command> {
     match args {
         [only] => single(only.to_str()?),
         [status, flag] if status == "status" && flag == "--check" => {
@@ -385,7 +588,7 @@ async fn serve(env: Env, given: session::Given) -> Result<(), String> {
             "the shared engine is required, so every call fails with engine_unavailable until one is reached: {reason}"
         ));
         let before = bridge::before::Before::new(tools);
-        return bridge::run(target, None, Some(before), log).await;
+        return bridge::run(*target, None, Some(before), log).await;
     }
     cli::print_error(&format!("serving this client standalone: {reason}"));
     standalone(env, settings, Some(reason)).await
@@ -396,12 +599,12 @@ async fn serve(env: Env, given: session::Given) -> Result<(), String> {
 async fn reach_engine(
     env: &Env,
     given: session::Given,
-) -> Result<(bridge::Target, bridge::Link), (Option<bridge::Target>, String)> {
+) -> Result<(bridge::Target, bridge::Link), (Option<Box<bridge::Target>>, String)> {
     let target = bridge::Target::new(env, given).map_err(|reason| (None, reason))?;
     match bridge::connect(&target).await {
         Ok(link) => Ok((target, link)),
         Err(bridge::Unreached::Never(reason)) => Err((None, reason)),
-        Err(unreached) => Err((Some(target), unreached.detail())),
+        Err(unreached) => Err((Some(Box::new(target)), unreached.detail())),
     }
 }
 
@@ -541,27 +744,175 @@ mod tests {
         std::fs::remove_dir_all(root).unwrap();
     }
 
+    /// Catches a `resume` that clears a desk's input-dirty marker, which only `recover
+    /// --desk` may once the human has checked that desk's input, one that clears the
+    /// host-wide flag while the host's own input may be stuck, and a `stop` that leaves the
+    /// desks running.
+    #[test]
+    fn stop_reaches_every_desk_and_resume_leaves_each_desks_marker() {
+        use crate::control::runtime::RuntimeDir;
+        let dir = test_support::short_dir("stop-all");
+        let host = test_support::niri_env(&dir);
+        let desk = test_support::desk_env(
+            &dir,
+            dir.join("niri.test.sock"),
+            desks::record::LockSources::default(),
+        );
+        let (host_runtime, desk_runtime) = (
+            RuntimeDir::of(&host).unwrap(),
+            RuntimeDir::of(&desk).unwrap(),
+        );
+        desk_runtime.create().unwrap();
+        std::fs::write(desk_runtime.path().join("input-dirty"), "").unwrap();
+        stop(&host).unwrap();
+        assert!(host_runtime.stopped().unwrap());
+        assert!(desk_runtime.stopped().unwrap());
+        resume(&host).unwrap();
+        assert!(!host_runtime.stopped().unwrap());
+        assert!(!desk_runtime.stopped().unwrap());
+        assert!(desk_runtime.input_dirty().unwrap());
+        stop(&host).unwrap();
+        std::fs::write(host_runtime.path().join("input-dirty"), "").unwrap();
+        assert!(resume(&host).is_err());
+        assert!(desk_runtime.stopped().unwrap());
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// A desk `web` of the host session in `dir`, recorded ready, its supervisor this test,
+    /// with its sockets, and the host's niri at `niri.wayland-0.3.sock`.
+    fn ready_desk(dir: &std::path::Path) -> Vec<std::os::unix::net::UnixListener> {
+        use desks::record::{self, Endpoints, Host, Phase, Record, Supervisor};
+        let name = desks::name::DeskName::parse("web").unwrap();
+        let layout = desks::layout::Desks::of(dir).desk(&name).unwrap();
+        std::fs::create_dir_all(layout.root()).unwrap();
+        let niri = layout.root().join("niri.wayland-1.7.sock");
+        let sockets = [niri.clone(), layout.root().join("wayland-1")]
+            .map(|socket| std::os::unix::net::UnixListener::bind(socket).unwrap());
+        let me = std::process::id();
+        let start_time = control::procs::stat(std::path::Path::new("/proc"), me)
+            .unwrap()
+            .start_time;
+        let phase = Phase::Ready {
+            endpoints: Endpoints {
+                niri_socket: niri,
+                wayland_display: "wayland-1".to_owned(),
+                session_bus: "unix:path=/desk/bus".to_owned(),
+                accessibility_bus: "unix:path=/desk/at-spi".to_owned(),
+            },
+            round_trips: desks::check::RoundTrips::of(&[std::time::Duration::from_micros(500)])
+                .unwrap(),
+        };
+        let desk = Record {
+            name,
+            mode: record::Mode::Headless,
+            size: None,
+            supervisor: Supervisor {
+                pid: me,
+                start_time,
+            },
+            generation: desks::scope::Generation::parse("1").unwrap(),
+            cgroup: "/app.slice/ncu-desk-web-1.scope".to_owned(),
+            started: String::new(),
+            phase,
+        };
+        record::write(&layout.record(), &desk).unwrap();
+        let host = Host {
+            runtime_dir: dir.to_path_buf(),
+            niri_socket: Some(dir.join("niri.wayland-0.3.sock")),
+            wayland_display: Some("wayland-0".to_owned()),
+            session_bus: Some("unix:path=/host/bus".to_owned()),
+            lock: record::LockSources {
+                logind_session: Some("4".to_owned()),
+                noctalia: Some(dir.join("noctalia-wayland-0.sock")),
+            },
+        };
+        record::write(&layout.host(), &host).unwrap();
+        sockets.into()
+    }
+
+    /// Catches a desk's server that reads the desk's niri for the lock state and the stop
+    /// key, which no lock screen ever locks, or the host's niri, display or session bus
+    /// for what it drives; one that drops the host's recorded Noctalia because its own
+    /// search finds no Noctalia; and children that lose the host's bus for notifications.
+    #[tokio::test]
+    async fn a_joined_desk_drives_the_desk_and_keeps_the_hosts_lock_sources() {
+        let dir = test_support::short_dir("env-desk");
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let _sockets = ready_desk(&dir);
+        let root = dir.join("ncu-d/web");
+        // This server's own search finds no Noctalia.
+        let host = Env {
+            runtime_dir: Some(dir.clone()),
+            ..Env::default()
+        };
+        let roots = discover::Roots {
+            run_user: &dir.join("run"),
+            proc: &dir.join("proc"),
+            euid: rustix::process::geteuid().as_raw(),
+        };
+        let name = desks::name::DeskName::parse("web").unwrap();
+        let env = host
+            .join_with(&name, discover::Probe::Offline, |_| None, &roots)
+            .await
+            .unwrap();
+        let niri = root.join("niri.wayland-1.7.sock");
+        assert_eq!(env.niri_socket.path().unwrap(), niri.as_path());
+        assert_eq!(env.runtime_dir, Some(root));
+        assert_eq!(env.session_bus, Some("unix:path=/desk/bus".into()));
+        let host_niri = dir.join("niri.wayland-0.3.sock");
+        assert_eq!(env.host_niri.path().unwrap(), host_niri.as_path());
+        assert_eq!(env.desktop.noctalia, None);
+        let lock = env.desk().unwrap().host.lock.clone();
+        assert_eq!(lock.noctalia, Some(dir.join("noctalia-wayland-0.sock")));
+        assert_eq!(lock.logind_session.as_deref(), Some("4"));
+        let children: std::collections::BTreeMap<_, _> = env.session_vars().into_iter().collect();
+        assert_eq!(children["NIRI_SOCKET"], niri.as_os_str());
+        assert_eq!(children["DBUS_SESSION_BUS_ADDRESS"], "unix:path=/host/bus");
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// Catches a `--desk` taken by `stop` or `resume`, which act on the host and every
+    /// desk at once, and a desk name that could be an option or a path.
+    #[test]
+    fn a_desk_is_named_last_and_only_where_it_means_something() {
+        let args = |list: &[&str]| list.iter().map(OsString::from).collect::<Vec<_>>();
+        let web = Some(desks::name::DeskName::parse("web").unwrap());
+        assert_eq!(
+            command(&args(&["serve", "--desk", "web"])),
+            Ok((Some(Command::Serve), web.clone()))
+        );
+        assert_eq!(
+            command(&args(&["status", "--check", "--desk", "web"])),
+            Ok((Some(Command::Status { check: true }), web))
+        );
+        for bad in [
+            &["stop", "--desk", "web"][..],
+            &["resume", "--desk", "web"],
+            &["serve", "--desk", "../web"],
+            &["serve", "--desk", "-x"],
+        ] {
+            assert!(command(&args(bad)).is_err(), "{bad:?}");
+        }
+    }
+
     #[test]
     fn takes_exactly_one_known_subcommand() {
         let args = |list: &[&str]| list.iter().map(OsString::from).collect::<Vec<_>>();
-        assert_eq!(command(&args(&["serve"])), Some(Command::Serve));
+        assert_eq!(known(&args(&["serve"])), Some(Command::Serve));
         assert_eq!(
-            command(&args(&["status"])),
+            known(&args(&["status"])),
             Some(Command::Status { check: false })
         );
         assert_eq!(
-            command(&args(&["status", "--check"])),
+            known(&args(&["status", "--check"])),
             Some(Command::Status { check: true })
         );
-        assert_eq!(command(&args(&["stop"])), Some(Command::Stop));
-        assert_eq!(command(&args(&["resume"])), Some(Command::Resume));
-        assert_eq!(command(&args(&["watch"])), Some(Command::Watch));
-        assert_eq!(command(&args(&["recover"])), Some(Command::Recover));
-        assert_eq!(command(&args(&["guard", "42"])), Some(Command::Guard(42)));
-        assert_eq!(
-            command(&args(&["paste-keeper"])),
-            Some(Command::PasteKeeper)
-        );
+        assert_eq!(known(&args(&["stop"])), Some(Command::Stop));
+        assert_eq!(known(&args(&["resume"])), Some(Command::Resume));
+        assert_eq!(known(&args(&["watch"])), Some(Command::Watch));
+        assert_eq!(known(&args(&["recover"])), Some(Command::Recover));
+        assert_eq!(known(&args(&["guard", "42"])), Some(Command::Guard(42)));
+        assert_eq!(known(&args(&["paste-keeper"])), Some(Command::PasteKeeper));
         for bad in [
             &[][..],
             &["stop", "now"],
@@ -572,7 +923,7 @@ mod tests {
             &["engine", "--unscoped"],
             &["engine", "--runtime-dir-discovered", "x"],
         ] {
-            assert_eq!(command(&args(bad)), None, "{bad:?}");
+            assert_eq!(known(&args(bad)), None, "{bad:?}");
         }
     }
 }

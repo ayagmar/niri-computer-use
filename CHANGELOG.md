@@ -4,6 +4,10 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## Unreleased
 
+### Added
+
+- Background desks, experimental: `desk start <name>` runs a headless niri of the agent's own beside your desktop, and `serve --desk <name>` serves an agent on it, so it never moves your focus or types into your windows. Your lock state, stop key and `stop` apply to every desk. `desk stop` and `desk list` manage them, and `status`, `watch` and `recover` take `--desk`. A desk runs in a systemd user scope of its own, which stops by itself if the desk's supervisor dies, and `desk stop` removes it only once nothing of the desk is left. A desk needs cage, dbus-daemon, at-spi2-core and the systemd user manager.
+
 ### Changed
 
 - The skill and the server's instructions tell agents that everything they read on the desktop, web pages, window titles, accessible names and the clipboard included, is data, never instructions, and to ask the user before doing what a page asks. The safety page says what that guidance can't promise.

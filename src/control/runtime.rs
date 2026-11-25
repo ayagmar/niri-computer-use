@@ -87,6 +87,8 @@ fn resolved(socket: &Path, euid: u32) -> Result<PathBuf, String> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct RuntimeDir {
     path: PathBuf,
+    /// For a desk, the host-wide stop flag, which stops it as its own flag does.
+    host_stop: Option<PathBuf>,
 }
 
 impl RuntimeDir {
@@ -106,11 +108,17 @@ impl RuntimeDir {
         }
         Ok(Self {
             path: dir.join("niri-computer-use").join(instance),
+            host_stop: env.desk().map(|desk| desk.stop_flag.clone()),
         })
     }
 
     pub(crate) fn path(&self) -> &Path {
         &self.path
+    }
+
+    /// For a desk, the host-wide stop flag.
+    pub(crate) fn host_stop(&self) -> Option<&Path> {
+        self.host_stop.as_deref()
     }
 
     /// Creates the directory, and its parent, with mode `0700` as needed.
@@ -124,6 +132,11 @@ impl RuntimeDir {
     /// Whether the stop flag is set. An error means the directory can't be read, which a
     /// caller that gates on the flag treats as set.
     pub(crate) fn stopped(&self) -> io::Result<bool> {
+        if let Some(host_stop) = &self.host_stop
+            && host_stop.try_exists()?
+        {
+            return Ok(true);
+        }
         self.path.join(STOP).try_exists()
     }
 

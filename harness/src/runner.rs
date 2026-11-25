@@ -73,6 +73,8 @@ enum Ending {
     Interrupted,
     /// Killed by `Process::stop` before its deadline.
     Stopped,
+    /// Exited with any status, for a caller that judges the status itself.
+    Ended,
 }
 
 /// Runs a program to completion and requires exit status 0. Errors keep the exit status
@@ -234,6 +236,19 @@ impl Process {
         self.finish(ending)
     }
 
+    /// Waits as `wait` does, but returns a non-zero exit instead of failing on it.
+    pub(crate) fn wait_any(mut self) -> Result<Output> {
+        let ending = wait_for_exit(&self.exit, self.end);
+        self.exited = matches!(ending, Ok(Ending::Exited));
+        let ending = ending.map(|ending| match self.late(ending) {
+            Ending::Exited => Ending::Ended,
+            other @ (Ending::TimedOut | Ending::Interrupted | Ending::Stopped | Ending::Ended) => {
+                other
+            }
+        });
+        self.finish(ending)
+    }
+
     /// Kills a program that runs until it is told to stop. It fails if the program has
     /// already failed, or if its deadline has passed.
     pub(crate) fn stop(self) -> Result<Output> {
@@ -313,7 +328,7 @@ impl Process {
         let stderr = collect(self.stderr.take(), output_end)
             .context(format!("read the output of {program}"));
         let failure = match ending {
-            Ending::Stopped => None,
+            Ending::Stopped | Ending::Ended => None,
             Ending::Exited if status.success() => None,
             Ending::Exited => Some(format!("{program} failed with {status}")),
             Ending::TimedOut => Some(format!(

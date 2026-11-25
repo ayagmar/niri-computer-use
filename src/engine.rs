@@ -416,7 +416,11 @@ impl Engine {
         let sources = status::Sources {
             engine: Some(engine),
             event_stream: Some(event_stream),
-            config_failed: self.config_failed(),
+            config_failed: if read_stop_key {
+                self.host_config_failed().await
+            } else {
+                None
+            },
             stop_key: read_stop_key.then_some(&self.stop_key),
             lease_notice_error: self.notices.last_error(),
             audit: &self.audit,
@@ -454,7 +458,7 @@ impl Engine {
         }
         let stop_key = self
             .stop_key
-            .check(&self.env.niri_socket, self.config_failed())
+            .check(&self.env.host_niri, self.host_config_failed().await)
             .await;
         Ok(Granted {
             holder,
@@ -485,6 +489,15 @@ impl Engine {
     }
 
     /// Whether niri's last config load failed, as the event stream last said.
+    /// Whether the owner's niri says its last config load failed: this one's event stream
+    /// on the host, the host's niri asked for a desk, whose own config is the desk's.
+    async fn host_config_failed(&self) -> Option<bool> {
+        if self.env.desk().is_some() {
+            return niri::config_failed(&self.env.host_niri).await.ok();
+        }
+        self.config_failed()
+    }
+
     fn config_failed(&self) -> Option<bool> {
         self.events
             .as_ref()
@@ -731,14 +744,14 @@ impl Engine {
                 None
             }
         };
-        let (state, outputs, shell, logind) = tokio::join!(
+        let (state, outputs, shell, reading) = tokio::join!(
             niri::desktop(self.events.as_ref()),
             niri::outputs(&self.env.niri_socket),
             shell,
-            control::logind(&self.env.niri_socket, &self.env.desktop)
+            control::Reading::of(&self.env)
         );
         let noctalia = shell.as_ref().and_then(|status| status.as_ref().ok());
-        let lock = control::lock(logind, noctalia);
+        let lock = reading.lock(noctalia);
         let mut state = state?;
         let titles_hidden = policy::refuse_observe(lock.state()).map(|refused| refused.detail);
         if titles_hidden.is_some() {

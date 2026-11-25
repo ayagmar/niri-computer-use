@@ -34,6 +34,8 @@ pub(crate) struct Watched {
     pub(crate) runtime: RuntimeDir,
     /// The niri socket's file name, as the audit log names the instance.
     pub(crate) instance: String,
+    /// The desk watched, if any.
+    pub(crate) desk: Option<String>,
     pub(crate) audit: Option<PathBuf>,
     pub(crate) proc_root: PathBuf,
 }
@@ -46,6 +48,7 @@ pub(crate) async fn run(env: &crate::Env) -> Result<(), String> {
         instance: env
             .instance()
             .ok_or("no niri socket, so there is no instance to watch")?,
+        desk: env.desk().map(|desk| desk.name.as_str().to_owned()),
         audit: crate::audit::Audit::new(env.state_dir.clone()).path(),
         proc_root: PathBuf::from("/proc"),
     };
@@ -79,6 +82,7 @@ pub(crate) async fn follow(
         format: FORMAT,
         version: env!("CARGO_PKG_VERSION"),
         instance: &watched.instance,
+        desk: watched.desk.as_deref(),
         overlay: overlay.to_str(),
     })
     .await?;
@@ -347,6 +351,7 @@ mod tests {
         Watched {
             runtime: RuntimeDir::of(&crate::test_support::niri_env(dir)).unwrap(),
             instance: "niri.sock".into(),
+            desk: None,
             audit: Some(dir.join("audit.jsonl")),
             proc_root: fake_proc(dir),
         }

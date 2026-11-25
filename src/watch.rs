@@ -38,6 +38,9 @@ pub(crate) enum Event<'a> {
         format: u32,
         version: &'static str,
         instance: &'a str,
+        /// The desk watched; absent on the host session.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        desk: Option<&'a str>,
         /// Where the overlay publishes the robot's area (`overlay_area`), which this
         /// build's settle waits leave out; absent for a path that isn't UTF-8.
         #[serde(skip_serializing_if = "Option::is_none")]
