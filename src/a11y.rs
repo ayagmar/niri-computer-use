@@ -19,10 +19,7 @@ use std::time::Duration;
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 use tokio::time::Instant;
-use zbus::Connection;
-use zbus::message::Message;
-use zbus::names::OwnedErrorName;
-use zbus::zvariant::{DynamicType, OwnedObjectPath, OwnedValue};
+use zbus::{Connection, DBusError, DynamicType, OwnedObjectPath, OwnedVariant, Type};
 
 use crate::error::{ErrorName, ToolError};
 use model::{Extents, Frame, Kept, NoFrame, Page, Picked, Shape, States};
@@ -124,7 +121,7 @@ pub(crate) async fn detect(session_bus: Option<&OsStr>) -> Presence {
 }
 
 async fn connect(address: &str) -> Result<Connection, zbus::Error> {
-    zbus::connection::Builder::address(address)?.build().await
+    zbus::connection::Builder::address(address).build().await
 }
 
 /// The accessibility bus, connected on first use and again after a connection fails, and
@@ -259,7 +256,7 @@ impl Request {
     ) -> Result<R, Failed>
     where
         B: Serialize + DynamicType + Sync,
-        R: DeserializeOwned + zbus::zvariant::Type,
+        R: DeserializeOwned + Type,
     {
         let (destination, path) = target;
         let (interface, method) = member;
@@ -292,7 +289,7 @@ impl Request {
     ) -> Result<Dispatched<R>, Failed>
     where
         B: Serialize + DynamicType + Sync,
-        R: DeserializeOwned + zbus::zvariant::Type,
+        R: DeserializeOwned + Type,
     {
         let (destination, path) = target;
         let (interface, method) = member;
@@ -317,10 +314,10 @@ impl Request {
         let reply = match tokio::time::timeout(deadline, call).await {
             Ok(Ok(reply)) => reply,
             Err(_) => return lost(late(&what, deadline).detail),
-            Ok(Err(zbus::Error::MethodError(name, _, _))) if name.as_str() == NO_REPLY => {
+            Ok(Err(error)) if error_name(&error).is_some_and(|name| name == NO_REPLY) => {
                 return lost(format!("{what}: {NO_REPLY}"));
             }
-            Ok(Err(error @ zbus::Error::MethodError(..))) => {
+            Ok(Err(error)) if error_name(&error).is_some() => {
                 return Err(self.failed(&what, error).await);
             }
             Ok(Err(error)) => {
@@ -335,11 +332,11 @@ impl Request {
     }
 
     async fn failed(&self, what: &str, error: zbus::Error) -> Failed {
-        if let zbus::Error::MethodError(name, _, _) = &error {
+        if let Some(name) = error_name(&error) {
             if GONE.contains(&name.as_str()) {
                 return Failed::Gone(self.upstream(what, &error).detail);
             }
-            return Failed::Refused(self.upstream(what, &error), name.to_string());
+            return Failed::Refused(self.upstream(what, &error), name);
         }
         *self.shared.lock().await = None;
         Failed::Error(self.upstream(what, &error))
@@ -351,8 +348,10 @@ impl Request {
         if !self.names_only {
             return upstream(what, error);
         }
-        let named = if let zbus::Error::MethodError(name, _, reply) = error {
-            standard_name(name, reply)
+        let named = if let zbus::Error::FDO(error) = error {
+            error.name().to_string()
+        } else if matches!(error, zbus::Error::MethodError(..)) {
+            APPLICATION_ERROR.to_owned()
         } else if let zbus::Error::InputOutput(error) = error {
             error.to_string()
         } else {
@@ -585,7 +584,7 @@ impl Request {
 
     /// The accessible name of the object at `at`.
     pub(crate) async fn name(&self, at: (&str, &str)) -> Result<String, Failed> {
-        let value: OwnedValue = self
+        let value: OwnedVariant = self
             .call(at, (PROPERTIES, "Get"), &(ACCESSIBLE, "Name"))
             .await?;
         Ok(String::try_from(value).unwrap_or_default())
@@ -773,7 +772,7 @@ impl Request {
 
     /// How many characters the element's text has now.
     pub(crate) async fn character_count(&self, element: &ElementRef) -> Result<i32, Failed> {
-        let value: OwnedValue = self
+        let value: OwnedVariant = self
             .call(element.at(), (PROPERTIES, "Get"), &(TEXT, "CharacterCount"))
             .await?;
         i32::try_from(value).map_err(|_| {
@@ -798,7 +797,7 @@ impl Request {
         if !self.has_interface(element, VALUE).await? {
             return Ok(None);
         }
-        let value: OwnedValue = self
+        let value: OwnedVariant = self
             .call(element.at(), (PROPERTIES, "Get"), &(VALUE, "CurrentValue"))
             .await?;
         f64::try_from(value).map(Some).map_err(|_| {
@@ -947,15 +946,17 @@ fn late(what: &str, left: Duration) -> ToolError {
     ToolError::new(ErrorName::DeadlineExceeded, detail)
 }
 
-/// A D-Bus error's name when it is one the D-Bus specification defines, as zbus lists them,
-/// or `application_error`: an application names its own errors, and may put anything that
-/// fits in a name, such as a record's identifier.
-fn standard_name(name: &OwnedErrorName, reply: &Message) -> String {
-    let known = zbus::fdo::Error::from(zbus::Error::MethodError(name.clone(), None, reply.clone()));
-    if matches!(known, zbus::fdo::Error::ZBus(_)) {
-        return APPLICATION_ERROR.to_owned();
+/// The name of the D-Bus error that `error` replied with, when it is a reply. zbus hands over
+/// the names the D-Bus specification defines, as it lists them, as `Error::FDO`, and any other
+/// name as `Error::MethodError`.
+fn error_name(error: &zbus::Error) -> Option<String> {
+    if let zbus::Error::FDO(error) = error {
+        return Some(error.name().to_string());
     }
-    name.to_string()
+    if let zbus::Error::MethodError(name, _, _) = error {
+        return Some(name.to_string());
+    }
+    None
 }
 
 fn upstream(what: &str, error: &zbus::Error) -> ToolError {

@@ -14,8 +14,7 @@ use tokio::io::{AsyncBufReadExt as _, BufReader};
 use tokio::process::{Child, Command};
 use zbus::message::{Header, Message};
 use zbus::names::ErrorName;
-use zbus::zvariant::OwnedObjectPath;
-use zbus::{Connection, fdo, interface};
+use zbus::{Connection, OwnedObjectPath, fdo, interface};
 
 use crate::client::WAIT;
 use crate::fixture::{Fixture, SPAWNING};
@@ -189,7 +188,7 @@ impl zbus::DBusError for Refusal {
     fn create_reply(&self, call: &Header<'_>) -> zbus::Result<Message> {
         match self {
             Self::Standard(error) => error.create_reply(call),
-            Self::Named(_) => Message::error(call, self.name())?.build(&("refused",)),
+            Self::Named(_) => Message::error(call, self.name()).build(&("refused",)),
         }
     }
 
@@ -444,7 +443,7 @@ impl Bus {
             )
             .await
             .unwrap();
-        let value: zbus::zvariant::OwnedValue = reply.body().deserialize().unwrap();
+        let value: zbus::OwnedVariant = reply.body().deserialize().unwrap();
         bool::try_from(value).unwrap()
     }
 
@@ -574,7 +573,6 @@ async fn daemon(fixture: &Fixture) -> (Child, String) {
 
 async fn connect(address: &str) -> Connection {
     zbus::connection::Builder::address(address)
-        .unwrap()
         .build()
         .await
         .unwrap()

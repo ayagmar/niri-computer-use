@@ -276,11 +276,11 @@ async fn is_enabled(connection: &Connection, deadline: Instant) -> Result<bool, 
         ),
     )
     .await?;
-    let value: zbus::zvariant::OwnedValue = reply
+    let value: zbus::OwnedVariant = reply
         .body()
         .deserialize()
         .map_err(|error| upstream(what, &error))?;
-    bool::try_from(value).map_err(|error| upstream(what, &zbus::Error::Variant(error)))
+    bool::try_from(value).map_err(|error| upstream(what, &error))
 }
 
 /// What is left until `deadline`, at most one call's deadline.
