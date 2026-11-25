@@ -7,11 +7,13 @@
 //! under `TEST_DIR`; `desk stop` removes it, also when a check fails.
 //!
 //! The entry leaves a process behind that ignores the display, double-forked under its own
-//! session. It is gone after the orderly `desk stop`; and on a second start, it outlives a
-//! `SIGKILL` of the supervisor and is gone after `desk stop`, which stops the desk's
-//! systemd scope. A desk needs the user's systemd manager, which the nested session's
-//! runtime directory reaches through a link to its private socket; the desk's scopes are
-//! the only units this makes, and `desk stop` removes each.
+//! session. It is gone after the orderly `desk stop`. On a second start, a `SIGKILL` of the
+//! supervisor takes the orphan, cage, niri and the desk's systemd scope down within 15 s
+//! with no `desk stop`; the supervisor's guard stops the scope. `desk stop` then removes
+//! the directory it left. `interrupted` covers starts whose command is killed. A desk
+//! needs the user's systemd manager, which the nested session's runtime directory reaches
+//! through a link to its private socket; the desks' scopes are the only units this makes,
+//! and each is gone by the end.
 
 use std::ffi::OsString;
 use std::fs;
@@ -24,6 +26,8 @@ use serde_json::{Value, json};
 use crate::failure::{Context as _, Failure, Result};
 use crate::mcp::{Client, field, report, structured};
 use crate::session::Session;
+
+mod interrupted;
 
 /// The desk's name, short so its sockets fit under `TEST_DIR`.
 const NAME: &str = "h1";
@@ -70,6 +74,7 @@ pub(crate) fn run(session: &mut Session<'_>, server: &str) -> Result<()> {
     orphan_gone(session, 1, "the orderly desk stop")?;
     session.log("desk: desk stop removed the desk and what its app left")?;
     killed(session, server)?;
+    interrupted::run(session, server)?;
     noctalia.stop().map(drop)
 }
 
@@ -90,8 +95,13 @@ fn user_manager(session: &Session<'_>) -> Result<()> {
         .context(format!("link {}", dir.join("private").display()))
 }
 
-/// A second desk whose supervisor is killed: the entry's orphan outlives it, since
-/// nothing but the scope holds it, and `desk stop` stops all of it.
+/// How long the desk may take to go down after its supervisor's `SIGKILL`: systemd's
+/// `SIGKILL` of what a stop's `SIGTERM` left comes after 5 s.
+const DOWN: Duration = Duration::from_secs(15);
+
+/// A second desk whose supervisor is killed: its guard stops the scope, so the entry's
+/// orphan, cage, niri and the unit are gone within `DOWN` with no `desk stop`, which then
+/// removes the directory left behind.
 fn killed(session: &mut Session<'_>, server: &str) -> Result<()> {
     desk(
         session,
@@ -105,11 +115,10 @@ fn killed(session: &mut Session<'_>, server: &str) -> Result<()> {
     stopped?;
     expect(
         !desk_root(session).exists(),
-        "desk stop to remove a desk whose supervisor was killed",
+        "desk stop to remove the directory a killed supervisor left",
         &desk_root(session).display().to_string(),
     )?;
-    orphan_gone(session, 2, "desk stop after its supervisor was killed")?;
-    session.log("desk: desk stop stopped a desk whose supervisor was killed, orphan and all")
+    session.log("desk: desk stop removed the directory the killed supervisor left")
 }
 
 /// Launches the entry on the running desk, which leaves its second orphan.
@@ -129,7 +138,8 @@ fn orphan_left(session: &mut Session<'_>, server: &str) -> Result<()> {
     orphan(session, 2).map(drop)
 }
 
-/// Kills the desk's supervisor and waits until it is gone; the entry's orphan lives on.
+/// Kills the desk's supervisor, then waits until the orphan, cage, niri and the unit are
+/// gone, all within `DOWN` of the kill.
 fn kill_supervisor(session: &mut Session<'_>) -> Result<()> {
     let file = desk_root(session).join("desk.json");
     let text = fs::read_to_string(&file).context(format!("read {}", file.display()))?;
@@ -140,21 +150,59 @@ fn kill_supervisor(session: &mut Session<'_>) -> Result<()> {
         .and_then(|pid| i32::try_from(pid).ok())
         .and_then(rustix::process::Pid::from_raw)
         .ok_or_else(|| Failure::new(format!("no supervisor PID in {text}")))?;
+    let cgroup = record
+        .pointer("/cgroup")
+        .and_then(Value::as_str)
+        .ok_or_else(|| Failure::new(format!("no cgroup in {text}")))?;
+    let unit = cgroup.rsplit('/').next().unwrap_or_default().to_owned();
+    let mut watched = members(cgroup, &["cage", "niri"])?;
+    watched.push((orphan(session, 2)?, "the entry's orphan".to_owned()));
     rustix::process::kill_process(pid, rustix::process::Signal::KILL)
         .context("kill the desk's supervisor")?;
+    let killed = std::time::Instant::now();
     let raw = pid.as_raw_nonzero().get().unsigned_abs();
-    session.wait_until("desk-killed", "the killed supervisor gone", WAIT, |_| {
-        Ok((!alive(raw)).then_some(()))
+    session.wait_until("desk-killed", "the killed desk gone", DOWN, |session| {
+        let running = watched.iter().any(|(member, _)| alive(*member));
+        Ok((!running && !scope_known(session, &unit)?).then_some(()))
     })?;
-    let orphan = orphan(session, 2)?;
-    expect(
-        alive(orphan),
-        "the entry's orphan to outlive its supervisor's SIGKILL",
-        &orphan.to_string(),
-    )?;
+    let named: Vec<String> = watched
+        .iter()
+        .map(|(member, name)| format!("{name} {member}"))
+        .collect();
     session.log(&format!(
-        "desk: killed the supervisor (PID {raw}); the entry's orphan (PID {orphan}) lives on"
+        "desk: killed the supervisor (PID {raw}); {} and {unit} were gone {:?} later, with no desk stop",
+        named.join(", "),
+        killed.elapsed()
     ))
+}
+
+/// The PIDs of the processes called `names` in `cgroup`, each required.
+fn members(cgroup: &str, names: &[&str]) -> Result<Vec<(u32, String)>> {
+    let procs = Path::new("/sys/fs/cgroup")
+        .join(cgroup.trim_start_matches('/'))
+        .join("cgroup.procs");
+    let text = fs::read_to_string(&procs).context(format!("read {}", procs.display()))?;
+    let pids: Vec<u32> = text.lines().filter_map(|pid| pid.parse().ok()).collect();
+    names
+        .iter()
+        .map(|&name| {
+            pids.iter()
+                .copied()
+                .find(|pid| {
+                    fs::read_to_string(format!("/proc/{pid}/comm"))
+                        .is_ok_and(|comm| comm.trim() == name)
+                })
+                .map(|pid| (pid, name.to_owned()))
+                .ok_or_else(|| Failure::new(format!("no {name} in {}: {text}", procs.display())))
+        })
+        .collect()
+}
+
+/// Whether the user's systemd manager still knows the scope `unit`.
+fn scope_known(session: &Session<'_>, unit: &str) -> Result<bool> {
+    let args = ["--user", "show", "-p", "LoadState", unit].map(OsString::from);
+    let shown = session.run("systemctl", &args)?;
+    Ok(String::from_utf8_lossy(&shown.stdout).trim() != "LoadState=not-found")
 }
 
 /// The PID of the entry's `nth` orphan, once it has written it.
@@ -343,21 +391,26 @@ fn stops(session: &mut Session<'_>, server: &str, client: &mut Client) -> Result
 
 /// Runs `desk <args>` to completion, failing with its output.
 fn desk(session: &Session<'_>, server: &str, args: &[OsString]) -> Result<()> {
+    let name = args.first().and_then(|arg| arg.to_str()).unwrap_or("desk");
+    let (succeeded, said) = desk_said(session, server, args)?;
+    if succeeded {
+        return Ok(());
+    }
+    Err(Failure::new(format!("desk {name} failed: {said}")))
+}
+
+/// Runs `desk <args>` to completion: whether it succeeded, and what it said.
+fn desk_said(session: &Session<'_>, server: &str, args: &[OsString]) -> Result<(bool, String)> {
     let mut all: Vec<OsString> = vec!["desk".into()];
     all.extend_from_slice(args);
     let name = args.first().and_then(|arg| arg.to_str()).unwrap_or("desk");
     let log = session.artifact(&format!("desk-{name}.log"));
+    fs::remove_file(&log).ok();
     let output = session
         .start(server, &all, log.clone(), DESK_DEADLINE)?
-        .wait()?;
-    if output.status.success() {
-        return Ok(());
-    }
+        .wait_any()?;
     let said = fs::read_to_string(&log).unwrap_or_default();
-    Err(Failure::new(format!(
-        "desk {name} failed ({}): {said}",
-        output.status
-    )))
+    Ok((output.status.success(), said))
 }
 
 /// The policy: no lease notification, and the entry as a preset.
