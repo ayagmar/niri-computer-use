@@ -97,9 +97,11 @@ async fn off_runtime<T: Send + 'static>(
     let spawned = std::thread::Builder::new()
         .name("save".to_owned())
         .spawn(move || {
-            // Clears `busy` however the job ends, a panic included.
-            let _clear = Clear(busy);
+            // Clears `busy` however the job ends, a panic included, and before the answer
+            // goes out, so a save right after this one finds it clear.
+            let clear = Clear(busy);
             let done = job();
+            drop(clear);
             // The call may have stopped waiting; the job's work is done all the same.
             let _ignored = sent.send(done);
         });
@@ -219,6 +221,16 @@ mod tests {
 
         assert_eq!(panicked, Err(Stalled::Ended));
         assert_eq!(off_runtime(&BUSY, limit, || 7).await, Ok(7));
+    }
+
+    /// A save right after one that answered finds the flag clear.
+    #[tokio::test]
+    async fn back_to_back_saves_never_see_the_last_one_busy() {
+        static BUSY: AtomicBool = AtomicBool::new(false);
+        let limit = Duration::from_secs(5);
+        for n in 0..200 {
+            assert_eq!(off_runtime(&BUSY, limit, move || n).await, Ok(n));
+        }
     }
 
     fn target(dir: &Path, path: &str) -> SaveTarget {

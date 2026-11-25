@@ -297,24 +297,31 @@ impl Audit {
 
     /// Waits until every line queued so far is written, at most `WRITE_LIMIT`, for a
     /// server about to exit: the writer is a thread the process doesn't wait for. A log
-    /// still behind says so on stderr.
-    pub(crate) async fn flush(&self) {
+    /// still behind says so on stderr, and this returns false.
+    pub(crate) async fn flush(&self) -> bool {
         let (Some(path), Some(_started)) = (&self.path, self.writer.get()) else {
-            return;
+            return true;
         };
         let by = tokio::time::Instant::now() + WRITE_LIMIT;
-        let flushed = match self.send(path, Vec::new()) {
-            Ok(written) => tokio::time::timeout_at(by, written)
-                .await
-                .is_ok_and(|done| done.is_ok()),
-            Err(_) => false,
-        };
+        let flushed = tokio::time::timeout_at(by, async {
+            // A full queue takes the marker once the writer has room again.
+            let written = loop {
+                match self.send(path, Vec::new()) {
+                    Ok(written) => break written,
+                    Err(_) => tokio::time::sleep(Duration::from_millis(10)).await,
+                }
+            };
+            written.await.is_ok()
+        })
+        .await
+        .unwrap_or(false);
         if !flushed {
             crate::cli::print_error(&format!(
                 "the audit log {} was still being written when the server ended; its last lines may be missing",
                 path.display()
             ));
         }
+        flushed
     }
 
     /// The writer's queue, starting its thread for the first line.
@@ -820,13 +827,39 @@ mod tests {
         let (release, released) = std::sync::mpsc::channel::<()>();
         let reader = std::thread::spawn(move || {
             let _released_or_timed_out = released.recv_timeout(Duration::from_secs(5));
-            let mut text = String::new();
-            while text.lines().count() < lines {
-                text.push_str(&std::fs::read_to_string(&log).unwrap());
-            }
-            text
+            read_fifo(&log, lines, Instant::now() + Duration::from_secs(10))
         });
         (dir.clone(), Audit::new(Some(dir)), release, reader)
+    }
+
+    /// Reads `lines` from the FIFO at `log`, or what came by `by`. Opened for reading and
+    /// writing, without blocking, it never waits for a writer, and a writer always finds
+    /// it open, so a line that never comes ends the read at `by` instead of hanging it.
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "runs on a thread of its own, never on the runtime"
+    )]
+    fn read_fifo(log: &Path, lines: usize, by: Instant) -> String {
+        use std::io::Read as _;
+        let nonblocking = i32::try_from(rustix::fs::OFlags::NONBLOCK.bits()).unwrap();
+        let mut fifo = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .custom_flags(nonblocking)
+            .open(log)
+            .unwrap();
+        let mut read = Vec::new();
+        let mut chunk = [0_u8; 4096];
+        while String::from_utf8_lossy(&read).lines().count() < lines && Instant::now() < by {
+            match fifo.read(&mut chunk) {
+                Ok(count) => read.extend_from_slice(&chunk[..count]),
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                    std::thread::sleep(Duration::from_millis(5));
+                }
+                Err(error) => panic!("{error}"),
+            }
+        }
+        String::from_utf8(read).unwrap()
     }
 
     /// A stalled log holds a call up for at most `WRITE_LIMIT`, and the line is written
@@ -882,6 +915,40 @@ mod tests {
         let text = reader.join().unwrap();
         assert!(took < WRITE_LIMIT + Duration::from_millis(500), "{took:?}");
         assert_eq!(text.lines().count(), 3, "{text}");
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// A flush that finds the queue full, behind a log that opens again within its
+    /// limit, waits for the writer to make room rather than giving up at once.
+    #[tokio::test]
+    async fn a_flush_behind_a_full_queue_waits_for_room() {
+        let lines = QUEUE + 1;
+        let (dir, audit, release, reader) = stalled_log("audit-full", lines);
+        let caller = Caller {
+            session: "smoke/1",
+            instance: None,
+        };
+        let refused = ToolError::new(ErrorName::EngineLost, "the engine ended").into_result();
+        let queue = || {
+            audit.queue(
+                &Call::action("key"),
+                caller,
+                json!({}),
+                &Ok(refused.clone()),
+            )
+        };
+        // One line the writer holds in its open, and a full queue behind it.
+        let first = queue();
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        let queued: Vec<Pending> = (1..lines).map(|_| queue()).collect();
+
+        release.send(()).ok();
+        let caught_up = audit.flush().await;
+
+        drop((first, queued));
+        let text = reader.join().unwrap();
+        assert!(caught_up);
+        assert_eq!(text.lines().count(), lines);
         std::fs::remove_dir_all(dir).unwrap();
     }
 

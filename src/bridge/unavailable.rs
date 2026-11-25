@@ -37,15 +37,18 @@ impl Unavailable {
     /// every other session.
     pub(crate) async fn run(self) -> Result<(), String> {
         let (input, _gone) = Incoming::new(tokio::io::stdin());
+        let log = self.log.clone();
         let service = self
             .serve((input, tokio::io::stdout()))
             .await
             .map_err(|error| format!("start MCP session: {error}"))?;
-        service
+        let served = service
             .waiting()
             .await
             .map(drop)
-            .map_err(|error| format!("MCP session: {error}"))
+            .map_err(|error| format!("MCP session: {error}"));
+        log.flush().await;
+        served
     }
 }
 

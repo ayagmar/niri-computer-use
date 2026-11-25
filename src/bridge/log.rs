@@ -16,7 +16,7 @@ use crate::error::ToolError;
 use crate::session::Label;
 
 /// Where the bridge logs, for which niri, and the tools it may name.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub(crate) struct Log {
     audit: Audit,
     instance: Option<String>,
@@ -59,7 +59,7 @@ impl Log {
 
     /// Waits for the lines queued so far, as `Audit::flush` does, before the bridge exits.
     pub(crate) async fn flush(&self) {
-        self.audit.flush().await;
+        let _caught_up = self.audit.flush().await;
     }
 
     /// Logs `asked`, which this bridge answered with `error`, waiting at most
