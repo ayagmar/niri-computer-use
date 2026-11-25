@@ -5,6 +5,13 @@
 //! `spawn` of `stop` on the host as the keybind sends it, stops the desk's agent, and
 //! `resume` lets it act again. `watch --desk` names the desk. Everything the desk makes is
 //! under `TEST_DIR`; `desk stop` removes it, also when a check fails.
+//!
+//! The entry leaves a process behind that ignores the display, double-forked under its own
+//! session. It is gone after the orderly `desk stop`; and on a second start, it outlives a
+//! `SIGKILL` of the supervisor and is gone after `desk stop`, which stops the desk's
+//! systemd scope. A desk needs the user's systemd manager, which the nested session's
+//! runtime directory reaches through a link to its private socket; the desk's scopes are
+//! the only units this makes, and `desk stop` removes each.
 
 use std::ffi::OsString;
 use std::fs;
@@ -38,6 +45,7 @@ pub(crate) fn run(session: &mut Session<'_>, server: &str) -> Result<()> {
         NOCTALIA_DEADLINE,
     )?;
     write_policy(session)?;
+    user_manager(session)?;
     let host = Host::read(session)?;
     desk(
         session,
@@ -59,8 +67,123 @@ pub(crate) fn run(session: &mut Session<'_>, server: &str) -> Result<()> {
     if let Some(left) = gone {
         return Err(left);
     }
-    session.log("desk: desk stop removed the desk")?;
+    orphan_gone(session, 1, "the orderly desk stop")?;
+    session.log("desk: desk stop removed the desk and what its app left")?;
+    killed(session, server)?;
     noctalia.stop().map(drop)
+}
+
+/// Links the nested runtime directory's `systemd/private` to the user's systemd manager's,
+/// which `systemd-run --user --scope` and `systemctl --user` reach first.
+fn user_manager(session: &Session<'_>) -> Result<()> {
+    let uid = rustix::process::geteuid().as_raw();
+    let private = PathBuf::from(format!("/run/user/{uid}/systemd/private"));
+    if !private.exists() {
+        return Err(Failure::new(format!(
+            "a desk runs in a systemd user scope, and {} isn't there: no user manager",
+            private.display()
+        )));
+    }
+    let dir = session.test_dir().run().join("systemd");
+    fs::create_dir_all(&dir).context(format!("create {}", dir.display()))?;
+    std::os::unix::fs::symlink(&private, dir.join("private"))
+        .context(format!("link {}", dir.join("private").display()))
+}
+
+/// A second desk whose supervisor is killed: the entry's orphan outlives it, since
+/// nothing but the scope holds it, and `desk stop` stops all of it.
+fn killed(session: &mut Session<'_>, server: &str) -> Result<()> {
+    desk(
+        session,
+        server,
+        &["start".into(), "--size".into(), SIZE.into(), NAME.into()],
+    )?;
+    let checked = orphan_left(session, server).and_then(|()| kill_supervisor(session));
+    let stopped = desk(session, server, &["stop".into(), NAME.into()]);
+    copy_logs(session);
+    checked?;
+    stopped?;
+    expect(
+        !desk_root(session).exists(),
+        "desk stop to remove a desk whose supervisor was killed",
+        &desk_root(session).display().to_string(),
+    )?;
+    orphan_gone(session, 2, "desk stop after its supervisor was killed")?;
+    session.log("desk: desk stop stopped a desk whose supervisor was killed, orphan and all")
+}
+
+/// Launches the entry on the running desk, which leaves its second orphan.
+fn orphan_left(session: &mut Session<'_>, server: &str) -> Result<()> {
+    let args = ["serve".into(), "--desk".into(), NAME.into()];
+    let mut client = Client::start_command(session, server, &args, "desk-killed", CLIENT_DEADLINE)?;
+    ready(session, &mut client)?;
+    structured(&client.call(session, "acquire_desktop", json!({"label": "desk"}))?)?;
+    structured(&client.call(session, "launch", json!({"preset": "desk-entry"}))?)?;
+    structured(&client.call(
+        session,
+        "wait_for",
+        json!({"until": {"window": {"app_id": ENTRY}}, "timeout_ms": 15_000}),
+    )?)?;
+    structured(&client.call(session, "release_desktop", json!({"restore_focus": false}))?)?;
+    client.stop()?;
+    orphan(session, 2).map(drop)
+}
+
+/// Kills the desk's supervisor and waits until it is gone; the entry's orphan lives on.
+fn kill_supervisor(session: &mut Session<'_>) -> Result<()> {
+    let file = desk_root(session).join("desk.json");
+    let text = fs::read_to_string(&file).context(format!("read {}", file.display()))?;
+    let record: Value = serde_json::from_str(&text).context("parse the desk's record")?;
+    let pid = record
+        .pointer("/supervisor/pid")
+        .and_then(Value::as_i64)
+        .and_then(|pid| i32::try_from(pid).ok())
+        .and_then(rustix::process::Pid::from_raw)
+        .ok_or_else(|| Failure::new(format!("no supervisor PID in {text}")))?;
+    rustix::process::kill_process(pid, rustix::process::Signal::KILL)
+        .context("kill the desk's supervisor")?;
+    let raw = pid.as_raw_nonzero().get().unsigned_abs();
+    session.wait_until("desk-killed", "the killed supervisor gone", WAIT, |_| {
+        Ok((!alive(raw)).then_some(()))
+    })?;
+    let orphan = orphan(session, 2)?;
+    expect(
+        alive(orphan),
+        "the entry's orphan to outlive its supervisor's SIGKILL",
+        &orphan.to_string(),
+    )?;
+    session.log(&format!(
+        "desk: killed the supervisor (PID {raw}); the entry's orphan (PID {orphan}) lives on"
+    ))
+}
+
+/// The PID of the entry's `nth` orphan, once it has written it.
+fn orphan(session: &mut Session<'_>, nth: usize) -> Result<u32> {
+    let file = session.test_dir().root().join("orphans");
+    session.wait_until("desk-orphan", "the entry's orphan", WAIT, |_| {
+        Ok(fs::read_to_string(&file)
+            .ok()
+            .and_then(|text| text.lines().nth(nth - 1).map(str::to_owned))
+            .and_then(|pid| pid.trim().parse().ok()))
+    })
+}
+
+/// The entry's `nth` orphan is gone after `what`.
+fn orphan_gone(session: &mut Session<'_>, nth: usize, what: &str) -> Result<()> {
+    let pid = orphan(session, nth)?;
+    expect(
+        !alive(pid),
+        &format!("the entry's orphan gone after {what}"),
+        &format!("PID {pid} still runs"),
+    )
+}
+
+/// Whether `pid` runs: its `/proc` entry exists and it isn't a zombie.
+fn alive(pid: u32) -> bool {
+    fs::read_to_string(format!("/proc/{pid}/stat")).is_ok_and(|line| {
+        line.rsplit_once(") ")
+            .is_some_and(|(_, rest)| !rest.starts_with('Z'))
+    })
 }
 
 /// The checks on a running desk.
@@ -249,6 +372,7 @@ fn write_policy(session: &Session<'_>) -> Result<()> {
         text(&fixture)?,
         text(root)?,
         "entry",
+        "--orphan",
     ];
     let argv = serde_json::to_string(&argv).context("encode the preset")?;
     // An interpreter with arguments, and a preset's variables, need `unrestricted`. niri's
