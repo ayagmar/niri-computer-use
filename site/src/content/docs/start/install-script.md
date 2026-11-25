@@ -32,11 +32,12 @@ Each download has 15 seconds to connect and 5 minutes to finish. The script make
 
 ## What it checks
 
-Before it writes anywhere it keeps, the script checks three things. Any failure ends with a message and nothing installed.
+Before it writes anywhere it keeps, the script checks four things. Any failure ends with a message and nothing installed.
 
-1. The tarball matches its `.sha256`. This catches a download that is broken or cut off. It isn't a signature: the checksum comes from the same release as the tarball and the script, so whoever can change the release's files can change all three. If you want more than that, read the script and compare the tarball with a build of your own.
-2. The binary runs. The script runs `niri-computer-use --version` from the temporary directory. A binary this system can't run, such as one that needs a newer glibc than 2.39, fails here. If `TMPDIR` is mounted `noexec`, point `TMPDIR` at a directory programs can run from.
-3. The copies succeed. The binary, the skill and the Noctalia plugin are each copied beside their destination first, as `.niri-computer-use.new`, so a copy that fails, on a full disk for example, leaves what was installed before as it was.
+1. `NCU_REGISTER` is `1`, `0` or unset. This is checked before the download.
+2. The tarball matches its `.sha256`. This catches a download that is broken or cut off. It isn't a signature: the checksum comes from the same release as the tarball and the script, so whoever can change the release's files can change all three. If you want more than that, read the script and compare the tarball with a build of your own.
+3. The binary runs. The script runs `niri-computer-use --version` from the temporary directory. A binary this system can't run, such as one that needs a newer glibc than 2.39, fails here. If `TMPDIR` is mounted `noexec`, point `TMPDIR` at a directory programs can run from.
+4. The copies succeed. The binary, the skill and the Noctalia plugin are each copied beside their destination first, as `.niri-computer-use.new.<PID>`, so a copy that fails, on a full disk for example, leaves what was installed before as it was, and two runs at once don't remove each other's copies.
 
 ## What it writes
 
@@ -49,7 +50,7 @@ Before it writes anywhere it keeps, the script checks three things. Any failure 
 | `~/.local/share/niri-computer-use/noctalia/niri-computer-use/` | The [Noctalia plugin](../noctalia-plugin/), without its tests. A release from before the plugin leaves an installed one as it is |
 | `~/.local/share/noctalia/plugins/niri-computer-use` | A symlink to the plugin, only when `noctalia` is on `PATH`. `XDG_DATA_HOME` replaces `~/.local/share` here, as it does for Noctalia |
 
-`~/.claude/skills` and `~/.agents/skills` are created if they are missing. The binary goes into place with a rename, so a server that is running keeps the binary it started with until its clients restart. The temporary directory and the `.niri-computer-use.new` staging copies are removed when the script ends, however it ends.
+`~/.claude/skills` and `~/.agents/skills` are created if they are missing. The binary goes into place with a rename, so a server that is running keeps the binary it started with until its clients restart. The skill and the plugin go into place in two renames: the installed one is set aside, then the new one takes its name. If the script stops between the two, the one set aside is put back. The temporary directory and the staging copies are removed when the script ends; copies that a killed run left behind are removed by the next run.
 
 If a link already exists at one of the skill or plugin paths and points somewhere else, such as into a clone, the script replaces it and prints a line naming what it pointed to. If something that isn't a link is there, a directory for example, the script leaves it alone, prints where the skill or the plugin is, and goes on.
 

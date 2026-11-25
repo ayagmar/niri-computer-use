@@ -650,7 +650,7 @@ mod script {
     }
 
     #[tokio::test]
-    async fn an_unknown_ncu_register_value_is_refused_before_anything_is_registered() {
+    async fn an_unknown_ncu_register_value_is_refused_before_anything_is_installed() {
         let release = Release::new("bad-register", "x86_64");
         release.publish(LATEST, "x86_64", None);
         fake_agent(&release, "claude");
@@ -661,6 +661,10 @@ mod script {
         let stderr = String::from_utf8(output.stderr).unwrap();
         assert!(stderr.contains("NCU_REGISTER must be 1 or 0"), "{stderr}");
         assert_eq!(calls(&release, "claude"), Vec::<Vec<String>>::new());
+        let home = release.home();
+        assert!(!home.join(".local/bin/niri-computer-use").exists());
+        assert!(!home.join(".local/share/niri-computer-use").exists());
+        assert!(!home.join(".claude/skills/niri-computer-use").exists());
     }
 
     #[tokio::test]
@@ -805,9 +809,77 @@ mod script {
             std::fs::read_to_string(link.join("SKILL.md")).unwrap(),
             "0.0.9"
         );
-        assert!(!home.join(".local/bin/.niri-computer-use.new").exists());
-        assert!(!skills.join(".niri-computer-use.new").exists());
+        assert_eq!(staged(&home.join(".local/bin")), Vec::<String>::new());
+        assert_eq!(staged(&skills), Vec::<String>::new());
         assert!(release.tmp_is_empty());
+    }
+
+    /// The names under `dir` that a run stages or sets aside, `.niri-computer-use.*`.
+    fn staged(dir: &Path) -> Vec<String> {
+        let mut names: Vec<String> = std::fs::read_dir(dir)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+            .filter(|name| name.starts_with(".niri-computer-use."))
+            .collect();
+        names.sort();
+        names
+    }
+
+    #[tokio::test]
+    async fn a_stop_between_the_skills_two_renames_puts_the_previous_skill_back() {
+        let release = Release::new("cut", "x86_64");
+        release.publish("0.0.9", "x86_64", None);
+        release.publish(LATEST, "x86_64", None);
+        let older = release.install(&[("NCU_VERSION", "0.0.9")]).await;
+        assert!(older.status.success(), "{older:?}");
+        // The rename of the staged skill into place fails, after the installed one was set
+        // aside: the script stops there, as if it were killed between the two.
+        release.fake(
+            "mv",
+            "case $1 in */skills/.niri-computer-use.new.*) echo 'mv: interrupted' >&2; exit 1 ;; esac\nexec /bin/mv \"$@\"\n",
+        );
+
+        let output = release.install(&[]).await;
+
+        assert!(!output.status.success());
+        let stderr = String::from_utf8(output.stderr).unwrap();
+        assert!(stderr.contains("the previous one is back"), "{stderr}");
+        let home = release.home();
+        let link = home.join(".claude/skills/niri-computer-use");
+        assert_eq!(
+            std::fs::read_to_string(link.join("SKILL.md")).unwrap(),
+            "0.0.9"
+        );
+        let skills = home.join(".local/share/niri-computer-use/skills");
+        assert_eq!(staged(&skills), Vec::<String>::new());
+    }
+
+    #[tokio::test]
+    async fn another_runs_staged_files_are_left_alone_and_a_dead_runs_removed() {
+        let release = Release::new("two-runs", "x86_64");
+        release.publish(LATEST, "x86_64", None);
+        let bin = release.home().join(".local/bin");
+        std::fs::create_dir_all(&bin).unwrap();
+        // This test's own PID stands for a run still going; a PID past pid_max for one that
+        // ended without its cleanup.
+        let live = format!(".niri-computer-use.new.{}", std::process::id());
+        let max: u64 = std::fs::read_to_string("/proc/sys/kernel/pid_max")
+            .unwrap()
+            .trim()
+            .parse()
+            .unwrap();
+        let dead = format!(".niri-computer-use.new.{}", max + 1);
+        std::fs::write(bin.join(&live), "staged by another run").unwrap();
+        std::fs::write(bin.join(&dead), "left by a killed run").unwrap();
+
+        let output = release.install(&[]).await;
+
+        assert!(output.status.success(), "{output:?}");
+        assert_eq!(staged(&bin), vec![live]);
+        assert_eq!(
+            version_of(&bin.join("niri-computer-use")),
+            "niri-computer-use 0.1.0\n"
+        );
     }
 
     #[tokio::test]

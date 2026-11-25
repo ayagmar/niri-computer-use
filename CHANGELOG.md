@@ -4,6 +4,11 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## Unreleased
 
+### Fixed
+
+- The install script checks `NCU_REGISTER` before it downloads anything. A wrong value used to fail the run after the new binary, skill and plugin were already in place.
+- Two runs of the install script at once can't remove each other's staged copies, and a run stopped while it replaces the skill or the plugin puts the previous one back instead of leaving none.
+
 ### Changed
 
 - rmcp 3.11.0. Before 3.9.0, rmcp's HTTP clients had an unbounded read (RUSTSEC-2026-0462); the server uses only stdio, which wasn't affected.
