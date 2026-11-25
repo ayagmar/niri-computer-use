@@ -2,6 +2,12 @@
 
 All notable changes to this project are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## Unreleased
+
+### Changed
+
+- rmcp 3.11.0. Before 3.9.0, rmcp's HTTP clients had an unbounded read (RUSTSEC-2026-0462); the server uses only stdio, which wasn't affected.
+
 ## 0.1.8 - 2026-11-04
 
 ### Added

@@ -2258,3 +2258,25 @@ The action's commit is the one its tag names in the action's repository (`git ls
 - The JSON is written with `noctalia.json.encode`, which writes whole numbers as integers, so `ts` reads as the server's `u64`.
 - Tests: the generated sequences also require that the robot thinks only between actions of a server that leaves its area out, that every box it draws is inside its area, and that nothing outside it changes while it thinks. A stage test checks the beats at three sizes and scales, and that the robot doesn't think when the gate is closed, then dozes, waves goodbye and stops before it glides. A stage test steps every 100 ms from an action's end at 72 pixels and UI scale 2.5 (and two smaller settings), for an end delivered alone, an end before the robot arrived, and an end after it arrived with and without a look, for an accepted click and an error, and requires the robot to stand still with one area throughout and every box inside it. Fake-host tests end runtimes as Noctalia does, calling `onExit`, and require the area's removal on a disable, a reload and an output going away; they also require the area file before the first frame where the robot stands, the same area through the hop, the ring, the caption going and thinking, its removal before the frame that gets ready to glide and on release, a refresh every 2 s, and no thinking while writes fail.
 
+
+## 2026-11-25: rmcp 3.11.0, and chrono's advisory
+
+- `cargo deny` failed on main for two advisories published after 0.1.8. RUSTSEC-2026-0462: before 3.9.0, rmcp's Streamable HTTP clients buffer a response body without a limit. This crate builds only `transport-io`, so that code isn't compiled in, but the gate is right to refuse the version. RUSTSEC-2026-0543: chrono is unmaintained, with no fixed release.
+- rmcp goes from 3.8.0 to 3.11.0, published 2026-11-17, the newest release at least seven days old. The manifest asks for 3.11.0, so no build resolves a vulnerable version. 3.9.0 to 3.11.0 add skills support and server changes, among them rejecting methods for capabilities the server didn't advertise and generating `outputSchema` from a tool's serialized output; the protocol and shared tests pass unchanged. `rmcp-macros` moves with it, also 3.11.0 of 2026-11-17. It brings twelve crates into `Cargo.lock` that aren't behind a feature, each published at least seven days before 2026-11-25:
+
+| Crate | Version | Published |
+|---|---|---|
+| `block-buffer` | 0.12.1 | 2026-06-11 |
+| `const-oid` | 0.10.3 | 2026-11-10 |
+| `cpufeatures` | 0.3.1 | 2026-08-26 |
+| `crypto-common` | 0.2.2 | 2026-05-19 |
+| `digest` | 0.11.3 | 2026-05-03 |
+| `hybrid-array` | 0.4.15 | 2026-09-08 |
+| `percent-encoding` | 2.3.2 | 2025-08-21 |
+| `sha2` | 0.11.1 | 2026-10-12 |
+| `tinyvec` | 1.13.3 | 2026-09-13 |
+| `typenum` | 1.20.1 | 2026-05-29 |
+| `unicode-general-category` | 1.1.0 | 2025-09-16 |
+| `unicode-normalization` | 0.1.26 | 2026-10-16 |
+
+- chrono's advisory is ignored in `deny.toml`. rmcp 3.11.0 and schemars 1.2.2 depend on chrono, so replacing the server's own three uses (timestamps in the audit log, `lease.json` and the input-dirty marker) wouldn't clear it. The entry says to revisit it when rmcp drops chrono.
