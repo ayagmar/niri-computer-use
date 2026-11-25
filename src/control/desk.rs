@@ -1631,6 +1631,42 @@ mod tests {
         std::fs::remove_dir_all(dir).unwrap();
     }
 
+    /// Catches a desk's server that checks only its own desk's stop flag, so the owner's
+    /// stop key, which sets the host-wide one, wouldn't stop an agent on a desk: neither
+    /// at admission nor before input goes out, before the watcher has seen the flag.
+    #[tokio::test]
+    async fn the_host_wide_stop_refuses_a_desk_at_admission_and_before_each_send() {
+        let me = session(1);
+        let dir = crate::test_support::short_dir("desk-host-stop");
+        let env = crate::test_support::desk_env(&dir, dir.join("host-niri.sock"), None);
+        let desk = Desk::start(&env);
+        desk.acquire(&me, "me/1", ready(None), ready(None))
+            .await
+            .unwrap();
+        desk.lock_read(Instant::now());
+        desk.fresh().unwrap();
+        crate::desks::layout::Desks::of(&dir).stop().unwrap();
+        assert_eq!(desk.fresh().unwrap_err().name, ErrorName::Stopped);
+        assert!(released(&desk).await);
+        assert_eq!(
+            desk.acquire(&me, "me/1", ready(None), ready(None))
+                .await
+                .unwrap_err()
+                .name,
+            ErrorName::Stopped
+        );
+        crate::desks::layout::Desks::of(&dir).resume().unwrap();
+        let mut seen = desk.stopped.clone().unwrap();
+        tokio::time::timeout(Duration::from_secs(5), seen.wait_for(|stopped| !*stopped))
+            .await
+            .unwrap()
+            .unwrap();
+        desk.acquire(&me, "me/1", ready(None), ready(None))
+            .await
+            .unwrap();
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
     #[tokio::test]
     async fn refuses_while_stopped_or_dirty_and_a_stop_takes_the_lease_back() {
         let me = session(1);

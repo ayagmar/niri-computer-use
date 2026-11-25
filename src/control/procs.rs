@@ -40,6 +40,29 @@ pub(crate) fn stat(proc_root: &Path, pid: u32) -> Option<Stat> {
     parse_stat(&text)
 }
 
+/// The processes under `proc_root` whose parent is `pid`, by `/proc/<pid>/stat`'s field 4.
+pub(crate) fn children(proc_root: &Path, pid: u32) -> Vec<u32> {
+    let Ok(entries) = std::fs::read_dir(proc_root) else {
+        return Vec::new();
+    };
+    entries
+        .filter_map(Result::ok)
+        .filter_map(|entry| entry.file_name().to_str()?.parse::<u32>().ok())
+        .filter(|&child| {
+            std::fs::read_to_string(proc_root.join(child.to_string()).join("stat"))
+                .ok()
+                .and_then(|text| parent_of(&text))
+                == Some(pid)
+        })
+        .collect()
+}
+
+/// The parent's PID in a `/proc/<pid>/stat` line: the field after the state.
+fn parent_of(text: &str) -> Option<u32> {
+    let (_, rest) = text.rsplit_once(") ")?;
+    rest.split(' ').nth(1)?.parse().ok()
+}
+
 /// The value of `name` in the environment `pid` started with, from
 /// `/proc/<pid>/environ`. `Ok(None)` when the process has no such variable.
 pub(crate) fn environ_var(
@@ -172,6 +195,13 @@ mod tests {
         assert_eq!(parse_stat("4711 (short) S 1"), None);
         assert_eq!(parse_stat(""), None);
         assert!(parse_stat(&STAT.replace(") S", ") Z")).unwrap().exited());
+    }
+
+    #[test]
+    fn reads_the_parent_past_a_tricky_name() {
+        assert_eq!(parent_of(STAT), Some(1));
+        assert_eq!(parent_of(&STAT.replace(") S 1 ", ") S 99 ")), Some(99));
+        assert_eq!(parent_of("4711 (no parent) S"), None);
     }
 
     #[test]

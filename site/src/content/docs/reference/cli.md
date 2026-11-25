@@ -6,10 +6,10 @@ sidebar:
 ---
 
 ```text
-niri-computer-use serve | status [--check] | stop | resume | recover | watch | engine | guard <server-pid> | paste-keeper | --version
+niri-computer-use serve | status [--check] | stop | resume | recover | watch, each but stop and resume with an optional --desk <name> | desk start [--windowed] [--size WIDTHxHEIGHT] <name> | desk stop <name> | desk list | engine | guard <server-pid> | paste-keeper | --version
 ```
 
-It takes exactly one subcommand, or `--version`, and no other options except `status --check`. Anything else prints that usage line to stderr and exits 1. Every subcommand works on the niri instance in `NIRI_SOCKET`, or, without it, the one running niri of yours the server [finds](../../start/clients/#session-variables). A niri bind passes `NIRI_SOCKET` on.
+It takes exactly one subcommand, or `--version`, and no other options except `status --check`, `--desk <name>` last and the `desk` subcommands' own. Anything else prints that usage line to stderr and exits 1. With `--desk <name>`, `serve`, `status`, `watch` and `recover` work on that [background desk](../../concepts/desks/) instead, and fail when it isn't ready. Every subcommand works on the niri instance in `NIRI_SOCKET`, or, without it, the one running niri of yours the server [finds](../../start/clients/#session-variables). A niri bind passes `NIRI_SOCKET` on.
 
 ## `serve`
 
@@ -53,7 +53,7 @@ Ready.
 niri-computer-use stop
 ```
 
-Sets the stop flag for this niri instance, prints nothing and exits 0. A running action is cancelled: it ends with `stopped`, or `uncertain` once what it sent may have taken effect (see [Safety](../../concepts/safety/#stop-and-resume)). The lease holder gives the lease up, and `acquire_desktop` and every action refuse with `stopped` until `resume`. Bind it to a key: see [First session](../../start/first-session/#bind-the-stop-key).
+Sets the stop flag for this niri instance, and the one every [background desk](../../concepts/desks/#lock-stop-and-resume)'s server checks, prints nothing and exits 0. A running action is cancelled: it ends with `stopped`, or `uncertain` once what it sent may have taken effect (see [Safety](../../concepts/safety/#stop-and-resume)). The lease holder gives the lease up, and `acquire_desktop` and every action refuse with `stopped` until `resume`. Bind it to a key: see [First session](../../start/first-session/#bind-the-stop-key).
 
 It never connects to niri, so it works while niri hangs. Without `NIRI_SOCKET`, it takes the one socket in the runtime directory that niri names, owned by you, whose PID is a running `niri`, without checking that this niri still listens on it. It fails, exiting 1, when there is no such socket or several, when niri's socket doesn't resolve to a socket of yours, with no hard link, in a directory only you can use, or when the flag can't be written.
 
@@ -63,7 +63,7 @@ It never connects to niri, so it works while niri hangs. Without `NIRI_SOCKET`, 
 niri-computer-use resume
 ```
 
-Clears the stop flag, prints nothing and exits 0, also when no flag was set. It finds niri's socket the way `stop` does. It refuses while the input-dirty marker exists, and doesn't clear it; `recover` does.
+Clears the stop flag, then the desks' one, prints nothing and exits 0, also when no flag was set. It finds niri's socket the way `stop` does. It refuses while the input-dirty marker exists, and doesn't clear it; `recover` does. It never clears a desk's marker; `recover --desk <name>` does.
 
 ## `watch`
 
@@ -122,6 +122,16 @@ Marker cleared. `niri-computer-use resume` clears the stop flag if it is set.
 
 Any other answer exits 1 with `not confirmed; the marker stays`.
 
+## `desk`
+
+```sh
+niri-computer-use desk start web
+niri-computer-use desk list
+niri-computer-use desk stop web
+```
+
+Start, list and stop [background desks](../../concepts/desks/). `desk start` prints each step to stderr and the desk's record as JSON once it is ready, and exits 1 with the failed step when it isn't, after stopping what it started. `desk list` prints every desk as JSON. `desk stop` stops a desk and removes its directory, and exits 1 when there is no such desk.
+
 ## `--version`
 
 ```sh
@@ -137,6 +147,7 @@ You don't run these yourself.
 - `engine` is the shared engine `serve` starts in [shared mode](../../concepts/configuration/#shared) when its niri instance has none. It serves every shared-mode client of the instance over `engine.sock` in the runtime directory, writes its errors to `engine.log` there, and exits two seconds after its last connection, lease and pending input cleanup have ended. A bridge passes it `--unscoped <reason>` when it couldn't start the engine in a scope of its own, and `--runtime-dir-discovered` when it found `XDG_RUNTIME_DIR` itself; both only change what `status` reports.
 - `guard <server-pid>` is the crash guardian a standalone `serve` or the shared engine starts. It waits for that server to end, and if the server's marker names native keys or pointer buttons it still held, releases them at once. As it starts, it does the same for a marker a dead server left that nothing released.
 - `paste-keeper` is the clipboard keeper a paste through `type_text` starts. It holds the pasted text on the clipboard, then puts the saved clipboard back.
+- `desk supervise <name> <mode> <size>` is the supervisor `desk start` starts, which runs the desk until it stops. `desk exec <supervisor-pid> -- <program> <args>` asks the kernel to kill the process when the supervisor dies, then becomes the program. `desk hold` is cage's one client, which keeps cage running until it stops.
 
 ## Exit status and errors
 

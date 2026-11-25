@@ -22,6 +22,7 @@ use std::time::Duration;
 use serde::Serialize;
 use serde_json::{Map, Value};
 
+use crate::error::ToolError;
 use crate::niri::Socket;
 use crate::runner::{self, Desktop, Search};
 use crate::{Env, niri, noctalia};
@@ -70,19 +71,27 @@ pub(crate) struct LockSources<'a> {
 
 impl LockSources<'_> {
     /// The lock state from reads started now, side by side: Noctalia's status and logind's
-    /// hint.
+    /// hint. A desk's is the host session's.
     pub(crate) async fn read(self) -> Lock {
         let status = async {
-            if self.noctalia {
+            if self.env.desk().is_some() {
+                host_noctalia(self.env).await.and_then(Result::ok)
+            } else if self.noctalia {
                 noctalia::status(self.env).await.ok()
             } else {
                 None
             }
         };
-        let (status, logind) =
-            tokio::join!(status, logind(&self.env.niri_socket, &self.env.desktop));
+        let (status, logind) = tokio::join!(status, logind(&self.env.host_niri, &self.env.desktop));
         lock(logind, status.as_ref())
     }
+}
+
+/// For a desk, the host's Noctalia's status, which its lock state follows; `None` on the
+/// host, whose Noctalia is read as its shell, and for a host without Noctalia.
+pub(crate) async fn host_noctalia(env: &Env) -> Option<Result<Map<String, Value>, ToolError>> {
+    let socket = env.desk()?.host_noctalia.as_deref()?;
+    Some(noctalia::status_at(socket).await)
 }
 
 /// What logind says about niri's session.
@@ -247,5 +256,52 @@ mod tests {
                 "{id:?}: {error}"
             );
         }
+    }
+
+    /// Serves Noctalia's `status` at `socket`, saying `locked`.
+    fn noctalia_at(socket: &Path, locked: bool) {
+        use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+        let listener = tokio::net::UnixListener::bind(socket).unwrap();
+        tokio::spawn(async move {
+            while let Ok((mut stream, _)) = listener.accept().await {
+                let mut request = Vec::new();
+                stream.read_to_end(&mut request).await.ok();
+                let status = format!(r#"{{"locked": {locked}}}"#);
+                stream.write_all(status.as_bytes()).await.ok();
+            }
+        });
+    }
+
+    /// Catches a desk whose server reads its own session's lock state, which no lock screen
+    /// ever locks, so an agent would act on the desk while the owner's screen is locked; and
+    /// one that acts when the host's state can't be read.
+    #[tokio::test]
+    async fn a_desks_lock_state_is_the_hosts_and_unknown_refuses() {
+        let dir = crate::test_support::short_dir("lock");
+        // Neither niri answers, so logind's hint is out of reach and Noctalia decides.
+        let host_niri = dir.join("host-niri.sock");
+        let host_noctalia = dir.join("noctalia-wayland-0.sock");
+        let env = crate::test_support::desk_env(&dir, host_niri, Some(host_noctalia.clone()));
+        // The desk's own display names a Noctalia that says unlocked; it must not count.
+        noctalia_at(&noctalia::socket(&env).unwrap(), false);
+        let sources = LockSources {
+            env: &env,
+            noctalia: true,
+        };
+        let unread = sources.read().await;
+        assert_eq!(unread.state(), LockState::Unknown, "{unread:?}");
+        assert!(crate::policy::refuse_lock(unread.state()).is_some());
+
+        noctalia_at(&host_noctalia, true);
+        let locked = sources.read().await;
+        assert_eq!(
+            (locked.state(), locked.source),
+            (LockState::Locked, LockSource::Noctalia)
+        );
+        assert_eq!(
+            crate::policy::refuse_lock(locked.state()).unwrap().name,
+            crate::error::ErrorName::ScreenLocked
+        );
+        std::fs::remove_dir_all(dir).unwrap();
     }
 }

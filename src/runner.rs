@@ -15,6 +15,8 @@ use tokio::process::{Child, ChildStdin, ChildStdout, Command};
 
 use crate::error::{ErrorName, ToolError};
 
+pub(crate) mod desk;
+
 /// The session variables as `main` resolved them, given to every child on top of the
 /// environment it inherits, without `WAYLAND_SOCKET`. A client such as Codex starts the server without them, and
 /// grim and wl-clipboard need them to reach the display. Setting them in the

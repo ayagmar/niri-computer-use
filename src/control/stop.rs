@@ -3,6 +3,7 @@
 //! never has to interpret event names or order.
 
 use std::io;
+use std::path::Path;
 use std::time::Duration;
 
 use rustix::fs::inotify;
@@ -25,17 +26,19 @@ const CHECK: Duration = Duration::from_secs(1);
 pub(crate) fn watch(runtime: RuntimeDir) -> io::Result<watch::Receiver<bool>> {
     runtime.create()?;
     let fd = inotify::init(inotify::CreateFlags::NONBLOCK | inotify::CreateFlags::CLOEXEC)?;
-    inotify::add_watch(
-        &fd,
-        runtime.path(),
-        inotify::WatchFlags::CREATE
-            | inotify::WatchFlags::DELETE
-            | inotify::WatchFlags::MOVED_TO
-            | inotify::WatchFlags::MOVED_FROM
-            | inotify::WatchFlags::DELETE_SELF
-            | inotify::WatchFlags::MOVE_SELF
-            | inotify::WatchFlags::ONLYDIR,
-    )?;
+    let flags = inotify::WatchFlags::CREATE
+        | inotify::WatchFlags::DELETE
+        | inotify::WatchFlags::MOVED_TO
+        | inotify::WatchFlags::MOVED_FROM
+        | inotify::WatchFlags::DELETE_SELF
+        | inotify::WatchFlags::MOVE_SELF
+        | inotify::WatchFlags::ONLYDIR;
+    inotify::add_watch(&fd, runtime.path(), flags)?;
+    // A desk's directory is inside the one with the host-wide flag, so that one outlives
+    // it; its removal removes the desk's too, which the first watch sees.
+    if let Some(host_stop) = runtime.host_stop().and_then(Path::parent) {
+        inotify::add_watch(&fd, host_stop, flags)?;
+    }
     #[expect(
         deprecated,
         reason = "the AsyncFd owns its OwnedFd, so nothing can close or replace the descriptor while it is registered (RUSTSEC-2026-0386)"

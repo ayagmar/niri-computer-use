@@ -85,4 +85,4 @@ Each call that reaches a tool is appended to `~/.local/state/niri-computer-use/a
 - You can still type and click while an agent works. The server notices focus moving and stops typing, but nothing keeps you and an agent from moving the pointer at the same time.
 - The lease belongs to a server process. Anything that runs as your user can start `niri-computer-use` too.
 
-For a stronger limit, give the agent a separate desktop holding only the apps it may use, such as a nested niri session.
+For a stronger limit, give the agent a separate desktop holding only the apps it may use: a [background desk](../desks/), which is experimental.

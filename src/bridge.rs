@@ -77,6 +77,8 @@ pub(crate) struct Target {
     runtime: RuntimeDir,
     hello: Vec<u8>,
     discovered_runtime_dir: Option<OsString>,
+    /// The engine's own arguments after `engine`'s: the desk it serves, if any.
+    desk: Vec<String>,
 }
 
 impl Target {
@@ -100,6 +102,10 @@ impl Target {
             runtime,
             hello: line,
             discovered_runtime_dir: discovered_runtime_dir(env),
+            desk: env
+                .desk()
+                .map(|desk| vec![crate::DESK.to_owned(), desk.name.as_str().to_owned()])
+                .unwrap_or_default(),
         })
     }
 }
@@ -371,7 +377,8 @@ async fn start(target: &Target, deadline: Instant, scoped: bool) -> Result<(), S
             Some(EARLIER.to_owned())
         };
         if let Some(reason) = unscoped {
-            let args = ["engine", UNSCOPED, &reason].map(str::to_owned);
+            let mut args = ["engine", UNSCOPED, &reason].map(str::to_owned).to_vec();
+            args.extend(target.desk.iter().cloned());
             runner::daemon("/proc/self/exe", &args, log).map_err(|error| error.detail)?;
             let listening = deadline.min(Instant::now() + LISTENING);
             while UnixStream::connect(&socket).await.is_err() && Instant::now() < listening {
@@ -398,7 +405,8 @@ async fn start_scoped(
     until: Instant,
 ) -> Option<String> {
     let exe = format!("/proc/{}/exe", std::process::id());
-    let (args, env) = scope_command(&exe, target.discovered_runtime_dir.as_ref());
+    let (mut args, env) = scope_command(&exe, target.discovered_runtime_dir.as_ref());
+    args.extend(target.desk.iter().cloned());
     let offset = log.metadata().map_or(0, |meta| meta.len());
     let stderr = match log.try_clone() {
         Ok(stderr) => stderr,
@@ -1008,6 +1016,7 @@ mod tests {
                 runtime: RuntimeDir::of(&crate::test_support::niri_env(dir)).unwrap(),
                 hello: Vec::new(),
                 discovered_runtime_dir: None,
+                desk: Vec::new(),
             },
             engine: Some(Link::new(1, BufReader::new(input), output)),
             before: None,

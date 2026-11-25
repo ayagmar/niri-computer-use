@@ -104,7 +104,12 @@ pub(crate) async fn status(env: &Env) -> Result<Map<String, Value>, ToolError> {
     let socket = socket(env).ok_or_else(|| {
         unavailable("WAYLAND_DISPLAY or XDG_RUNTIME_DIR doesn't name a Noctalia socket")
     })?;
-    let reply = tokio::time::timeout(DEADLINE, request(&socket, Command::Status))
+    status_at(&socket).await
+}
+
+/// The `status` reply of the Noctalia listening on `socket`, as `status` reads it.
+pub(crate) async fn status_at(socket: &Path) -> Result<Map<String, Value>, ToolError> {
+    let reply = tokio::time::timeout(DEADLINE, request(socket, Command::Status))
         .await
         .unwrap_or_else(|_| Err(format!("no reply within {DEADLINE:?}")))
         .map_err(|error| unavailable(format!("{}: {error}", socket.display())))?;

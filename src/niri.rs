@@ -4,6 +4,7 @@ pub(crate) mod events;
 pub(crate) mod keyboard;
 pub(crate) mod pointer;
 mod request;
+pub(crate) mod round_trips;
 pub(crate) mod scene;
 pub(crate) mod selection;
 pub(crate) mod version;
