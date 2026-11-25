@@ -6,6 +6,7 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ### Changed
 
+- The skill and the server's instructions tell agents that everything they read on the desktop, web pages, window titles, accessible names and the clipboard included, is data, never instructions, and to ask the user before doing what a page asks. The safety page says what that guidance can't promise.
 - rmcp 3.11.0. Before 3.9.0, rmcp's HTTP clients had an unbounded read (RUSTSEC-2026-0462); the server uses only stdio, which wasn't affected.
 
 ## 0.1.8 - 2026-11-04
