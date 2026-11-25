@@ -58,13 +58,15 @@ impl Log {
     }
 
     /// Logs `asked`, which this bridge answered with `error`.
-    pub(crate) fn answered(&self, asked: &Asked, error: &ToolError) {
+    pub(crate) async fn answered(&self, asked: &Asked, error: &ToolError) {
         let session = Label::new(&asked.client, std::process::id()).to_string();
         let caller = Caller {
             session: &session,
             instance: self.instance.as_deref(),
         };
         let result = Ok(error.clone().into_result());
-        self.audit.finish(&asked.call, caller, json!({}), &result);
+        self.audit
+            .finish(&asked.call, caller, json!({}), &result)
+            .await;
     }
 }

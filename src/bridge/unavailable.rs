@@ -74,10 +74,6 @@ impl ServerHandler for Unavailable {
         Ok(ListToolsResult::with_all_items(self.tools.clone()))
     }
 
-    #[expect(
-        clippy::unused_async_trait_impl,
-        reason = "rmcp's handler methods return futures; this answer needs nothing awaited"
-    )]
     async fn call_tool(
         &self,
         request: CallToolRequestParams,
@@ -86,7 +82,7 @@ impl ServerHandler for Unavailable {
         let error = ToolError::new(ErrorName::EngineUnavailable, self.detail.clone());
         let client = context.client_info().map(|info| info.name);
         if let Some(asked) = self.log.asked(&request.name, client.as_deref()) {
-            self.log.answered(&asked, &error);
+            self.log.answered(&asked, &error).await;
         }
         Ok(error.into_result().into())
     }

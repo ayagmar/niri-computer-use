@@ -792,11 +792,13 @@ impl Relay {
                 let error = self.lost_error("since the last call");
                 return self
                     .answer(&id, &method, asked.as_ref(), error)
+                    .await
                     .map_err(Stop::Writer);
             }
             if let Err(error) = self.reach(initializing).await? {
                 return self
                     .answer(&id, &method, asked.as_ref(), error)
+                    .await
                     .map_err(Stop::Writer);
             }
         }
@@ -871,7 +873,7 @@ impl Relay {
         self.unreported = self.in_flight.is_empty();
         for (id, method, asked) in std::mem::take(&mut self.in_flight).into_values() {
             if let Some(asked) = &asked {
-                self.log.answered(asked, &error);
+                self.log.answered(asked, &error).await;
             }
             let line = envelope::answer(&id, &method, error.clone());
             tokio::select! {
@@ -897,7 +899,7 @@ impl Relay {
     }
 
     /// Answers the request `id` with `error`, logging it when it is the call `asked`.
-    fn answer(
+    async fn answer(
         &mut self,
         id: &Value,
         method: &str,
@@ -905,7 +907,7 @@ impl Relay {
         error: ToolError,
     ) -> Result<(), String> {
         if let Some(asked) = asked {
-            self.log.answered(asked, &error);
+            self.log.answered(asked, &error).await;
         }
         self.reply(envelope::answer(id, method, error))
     }

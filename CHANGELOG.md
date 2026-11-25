@@ -10,6 +10,7 @@ All notable changes to this project are documented here. The format follows [Kee
 - Two runs of the install script at once take turns under a lock instead of removing each other's staged copies, and a run stopped while it replaces the skill or the plugin puts the previous one back instead of leaving none. The script now needs util-linux's `flock`.
 - After an update, the install script names the servers still running the replaced build when the binary's directory is reached through a link, as `/home` is on Fedora Atomic.
 - An accessibility call that waits for another call still connecting to the accessibility bus gives up at its own budget. `wait_for` an element could run up to a second past its timeout.
+- A state or capture directory on a file system that stalls, such as NFS or FUSE, no longer freezes every session of the server. The audit log is written by a thread of its own and a call waits for its line at most a second; a saved screenshot is written off the runtime and fails with `deadline_exceeded` after five seconds.
 
 ### Changed
 

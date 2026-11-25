@@ -13,14 +13,20 @@
 //! Once the log reaches `ROTATE_AT`, the next write first moves it aside to
 //! `audit.jsonl.1`, shifting older ones up to `audit.jsonl.3` and dropping the oldest
 //! (`rotate`).
+//!
+//! Lines are written by a thread of the log's own, in the order calls finish, so a file
+//! system that stalls, as an NFS or FUSE state directory can, never holds up the runtime.
+//! A call waits at most `WRITE_LIMIT` for its line, and one that finds `QUEUE` lines
+//! waiting goes unlogged; both say so in `status.audit.last_error`.
 
 use std::borrow::Cow;
 use std::fs::{DirBuilder, OpenOptions, TryLockError};
 use std::io::Write as _;
 use std::os::unix::fs::{DirBuilderExt as _, OpenOptionsExt as _};
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex, PoisonError};
-use std::time::Instant;
+use std::sync::mpsc::{SyncSender, TrySendError};
+use std::sync::{Arc, Mutex, OnceLock, PoisonError};
+use std::time::{Duration, Instant};
 
 use chrono::{SecondsFormat, Utc};
 use niri_ipc::Action;
@@ -38,12 +44,21 @@ use crate::noctalia::Named;
 const ROTATE_AT: u64 = 10 * 1024 * 1024;
 /// How many logs moved aside are kept: `audit.jsonl.1`, the newest, to `audit.jsonl.3`.
 const KEPT: u32 = 3;
+/// How long a call waits for its line to be written before it goes on without.
+const WRITE_LIMIT: Duration = Duration::from_secs(1);
+/// How many lines may wait for the writer; a call that finds this many goes unlogged.
+const QUEUE: usize = 64;
+
+/// A line for the writer, and the sender it answers on once the line is written.
+type Job = (Vec<u8>, tokio::sync::oneshot::Sender<()>);
 
 /// Where the log goes, and the last write error, which `status` reports.
 #[derive(Debug, Clone)]
 pub(crate) struct Audit {
     path: Option<PathBuf>,
     last_error: Arc<Mutex<Option<String>>>,
+    /// The writer thread's queue, started with the first line; `None` if it couldn't be.
+    writer: Arc<OnceLock<Option<SyncSender<Job>>>>,
 }
 
 /// One tool call, as written to the log.
@@ -130,6 +145,7 @@ impl Audit {
         Self {
             path: state_dir.map(|dir| dir.join("niri-computer-use").join("audit.jsonl")),
             last_error: Arc::new(Mutex::new(last_error)),
+            writer: Arc::default(),
         }
     }
 
@@ -146,7 +162,7 @@ impl Audit {
     }
 
     /// Logs a finished call: `args` is its metadata, and the outcome comes from `result`.
-    pub(crate) fn finish(
+    pub(crate) async fn finish(
         &self,
         call: &Call<'_>,
         caller: Caller<'_>,
@@ -173,26 +189,86 @@ impl Audit {
             error: summary.error,
             may_have_sent: may_have_sent(result),
             duration_ms: call.started.elapsed().as_millis(),
-        });
+        })
+        .await;
     }
 
-    /// Appends one line. A failure is kept for `status` and doesn't fail the tool call.
-    fn write(&self, record: &Record<'_>) {
+    /// Appends one line through the writer, waiting at most `WRITE_LIMIT`. A failure is
+    /// kept for `status` and doesn't fail the tool call.
+    async fn write(&self, record: &Record<'_>) {
         let Some(path) = &self.path else {
             return;
         };
-        let result = serde_json::to_vec(record)
-            .map_err(|error| error.to_string())
-            .and_then(|line| append(path, &line, ROTATE_AT).map_err(|error| error.to_string()));
-        if let Err(error) = result {
-            *self.last() = Some(error);
-        }
+        let line = match serde_json::to_vec(record) {
+            Ok(line) => line,
+            Err(error) => {
+                *self.last() = Some(error.to_string());
+                return;
+            }
+        };
+        let Some(jobs) = self.writer(path) else {
+            *self.last() = Some(format!(
+                "{}: the log's writer thread couldn't be started; calls go unlogged",
+                path.display()
+            ));
+            return;
+        };
+        let (done, written) = tokio::sync::oneshot::channel();
+        let unlogged = match jobs.try_send((line, done)) {
+            Ok(()) => match tokio::time::timeout(WRITE_LIMIT, written).await {
+                Ok(Ok(())) => return,
+                Ok(Err(_)) => "the log's writer thread ended; this call went unlogged".to_owned(),
+                Err(_) => format!(
+                    "a write took over {} s, as on a stalled file system; it is still pending",
+                    WRITE_LIMIT.as_secs()
+                ),
+            },
+            Err(TrySendError::Full(_)) => format!(
+                "{QUEUE} lines are waiting to be written, as on a stalled file system; this call went unlogged"
+            ),
+            Err(TrySendError::Disconnected(_)) => {
+                "the log's writer thread ended; this call went unlogged".to_owned()
+            }
+        };
+        *self.last() = Some(format!("{}: {unlogged}", path.display()));
+    }
+
+    /// The writer's queue, starting its thread for the first line.
+    fn writer(&self, path: &Path) -> Option<&SyncSender<Job>> {
+        self.writer
+            .get_or_init(|| {
+                let (jobs, queue) = std::sync::mpsc::sync_channel::<Job>(QUEUE);
+                let (path, last_error) = (path.to_owned(), Arc::clone(&self.last_error));
+                std::thread::Builder::new()
+                    .name("audit-writer".to_owned())
+                    .spawn(move || write_each(&queue, &path, &last_error))
+                    .ok()
+                    .map(|_thread| jobs)
+            })
+            .as_ref()
     }
 
     fn last(&self) -> std::sync::MutexGuard<'_, Option<String>> {
         self.last_error
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
+    }
+}
+
+/// The writer thread: appends each queued line to `path` in order, keeping a failure in
+/// `last_error`, and answers once it is written. It ends once every `Audit` sharing the
+/// queue is dropped.
+fn write_each(
+    queue: &std::sync::mpsc::Receiver<Job>,
+    path: &Path,
+    last_error: &Mutex<Option<String>>,
+) {
+    for (line, done) in queue {
+        if let Err(error) = append(path, &line, ROTATE_AT) {
+            *last_error.lock().unwrap_or_else(PoisonError::into_inner) = Some(error.to_string());
+        }
+        // The call may have stopped waiting; its line is written all the same.
+        let _ignored = done.send(());
     }
 }
 
@@ -591,17 +667,19 @@ mod tests {
         }
     }
 
-    #[test]
-    fn appends_one_private_line_per_call() {
+    #[tokio::test]
+    async fn appends_one_private_line_per_call() {
         let dir = crate::test_support::fresh_dir("audit");
         let audit = Audit::new(Some(dir.join("state")));
         let args = serde_json::json!({"target": "focused_output"});
-        audit.write(&record("screenshot", &args, None));
-        audit.write(&record(
-            "desktop_state",
-            &args,
-            Some("niri_unavailable".to_owned()),
-        ));
+        audit.write(&record("screenshot", &args, None)).await;
+        audit
+            .write(&record(
+                "desktop_state",
+                &args,
+                Some("niri_unavailable".to_owned()),
+            ))
+            .await;
         let path = dir.join("state/niri-computer-use/audit.jsonl");
         let lines: Vec<Value> = std::fs::read_to_string(&path)
             .unwrap()
@@ -626,13 +704,46 @@ mod tests {
         std::fs::remove_dir_all(dir).unwrap();
     }
 
-    #[test]
-    fn a_failed_write_is_kept_for_status() {
+    /// A log that can't be opened, here a FIFO nobody reads, as a stalled NFS or FUSE state
+    /// directory would, holds a call up for at most `WRITE_LIMIT`, and the line is written
+    /// once the file opens.
+    #[tokio::test]
+    async fn a_stalled_log_holds_a_call_up_for_at_most_its_limit() {
+        let dir = crate::test_support::fresh_dir("audit-stalled");
+        let log = dir.join("niri-computer-use/audit.jsonl");
+        std::fs::create_dir_all(log.parent().unwrap()).unwrap();
+        rustix::fs::mknodat(
+            rustix::fs::CWD,
+            &log,
+            rustix::fs::FileType::Fifo,
+            rustix::fs::Mode::from_raw_mode(0o600),
+            0,
+        )
+        .unwrap();
+        let audit = Audit::new(Some(dir.clone()));
+
+        let started = Instant::now();
+        audit.write(&record("status", &Value::Null, None)).await;
+
+        assert!(started.elapsed() < WRITE_LIMIT + Duration::from_millis(500));
+        let error = audit.status().last_error.unwrap_or_default();
+        assert!(error.contains("still pending"), "{error}");
+        let read = tokio::task::spawn_blocking(move || std::fs::read_to_string(log).unwrap());
+        let text = tokio::time::timeout(Duration::from_secs(5), read)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(text.contains("\"tool\":\"status\""), "{text}");
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_failed_write_is_kept_for_status() {
         let dir = crate::test_support::fresh_dir("audit-fail");
         // A file where the log's directory should be.
         std::fs::write(dir.join("niri-computer-use"), "").unwrap();
         let audit = Audit::new(Some(dir.clone()));
-        audit.write(&record("status", &Value::Null, None));
+        audit.write(&record("status", &Value::Null, None)).await;
         assert!(audit.status().last_error.is_some());
         assert_eq!(
             Audit::new(None).status().last_error.as_deref(),
@@ -671,7 +782,7 @@ mod tests {
             std::env::current_exe().unwrap(),
             crate::runner::Search::Own,
             &args,
-            std::time::Duration::from_secs(30),
+            Duration::from_secs(30),
             64 * 1024,
         )
         .await
@@ -811,8 +922,8 @@ mod tests {
 
     /// A stale lock read refuses after the `expect` check passed, and its detail can name
     /// the window; the line keeps only the error's name and the bounded arguments.
-    #[test]
-    fn a_stale_lock_read_is_logged_by_name_with_bounded_arguments() {
+    #[tokio::test]
+    async fn a_stale_lock_read_is_logged_by_name_with_bounded_arguments() {
         let dir = crate::test_support::fresh_dir("audit-stale");
         let audit = Audit::new(Some(dir.clone()));
         let caller = Caller {
@@ -825,7 +936,9 @@ mod tests {
             "expect": expect(&Expect::App(marker.to_owned())),
         });
         let stale = ToolError::new(ErrorName::LockStale, format!("read before {marker}"));
-        audit.finish(&Call::action("key"), caller, args, &Ok(stale.into_result()));
+        audit
+            .finish(&Call::action("key"), caller, args, &Ok(stale.into_result()))
+            .await;
         let text = std::fs::read_to_string(dir.join("niri-computer-use/audit.jsonl")).unwrap();
         assert!(!text.contains(marker), "{text}");
         let line: Value = serde_json::from_str(text.trim_end()).unwrap();
@@ -842,8 +955,8 @@ mod tests {
 
     /// A failure after input went out, or may have, says so in its result and in its audit
     /// line, so neither an agent nor the user takes it for one that sent nothing.
-    #[test]
-    fn a_failure_that_may_have_sent_input_says_so_in_its_result_and_line() {
+    #[tokio::test]
+    async fn a_failure_that_may_have_sent_input_says_so_in_its_result_and_line() {
         let dir = crate::test_support::fresh_dir("audit-may-have-sent");
         let audit = Audit::new(Some(dir.clone()));
         let caller = Caller {
@@ -857,7 +970,9 @@ mod tests {
         for error in [sent, plain] {
             let result = error.into_result();
             results.push(result.structured_content.clone().unwrap());
-            audit.finish(&Call::action("key"), caller, json!({}), &Ok(result));
+            audit
+                .finish(&Call::action("key"), caller, json!({}), &Ok(result))
+                .await;
         }
         assert_eq!(results[0]["may_have_sent"], true, "{}", results[0]);
         assert_eq!(results[1].get("may_have_sent"), None, "{}", results[1]);
@@ -985,8 +1100,8 @@ mod tests {
         );
     }
 
-    #[test]
-    fn actions_log_what_was_accepted_and_observed() {
+    #[tokio::test]
+    async fn actions_log_what_was_accepted_and_observed() {
         let dir = crate::test_support::fresh_dir("audit-action");
         let audit = Audit::new(Some(dir.clone()));
         let caller = Caller {
@@ -997,20 +1112,26 @@ mod tests {
         let done = CallToolResult::structured(serde_json::json!({
             "accepted": true, "observed": "focused", "focused_window": 4
         }));
-        audit.finish(
-            &Call::action("focus"),
-            caller,
-            args.clone(),
-            &Ok(done.clone()),
-        );
-        audit.finish(
-            &Call::start("desktop_state"),
-            caller,
-            args.clone(),
-            &Ok(done),
-        );
+        audit
+            .finish(
+                &Call::action("focus"),
+                caller,
+                args.clone(),
+                &Ok(done.clone()),
+            )
+            .await;
+        audit
+            .finish(
+                &Call::start("desktop_state"),
+                caller,
+                args.clone(),
+                &Ok(done),
+            )
+            .await;
         let refused = ToolError::new(ErrorName::LeaseRequired, "no").into_result();
-        audit.finish(&Call::action("focus"), caller, args, &Ok(refused));
+        audit
+            .finish(&Call::action("focus"), caller, args, &Ok(refused))
+            .await;
         let lines: Vec<Value> = std::fs::read_to_string(dir.join("niri-computer-use/audit.jsonl"))
             .unwrap()
             .lines()
@@ -1031,8 +1152,8 @@ mod tests {
         std::fs::remove_dir_all(dir).unwrap();
     }
 
-    #[test]
-    fn a_change_report_is_logged_as_counts_without_titles_or_names() {
+    #[tokio::test]
+    async fn a_change_report_is_logged_as_counts_without_titles_or_names() {
         let dir = crate::test_support::fresh_dir("audit-changes");
         let audit = Audit::new(Some(dir.clone()));
         let caller = Caller {
@@ -1058,13 +1179,17 @@ mod tests {
             "changes": {"elements": {"window_id": 1, "unknown": "not_accessible", "detail": "DETAIL-SENTINEL"}}
         }));
         let args = serde_json::json!({});
-        audit.finish(
-            &Call::action("activate_element"),
-            caller,
-            args.clone(),
-            &Ok(reported),
-        );
-        audit.finish(&Call::action("key"), caller, args, &Ok(unknown));
+        audit
+            .finish(
+                &Call::action("activate_element"),
+                caller,
+                args.clone(),
+                &Ok(reported),
+            )
+            .await;
+        audit
+            .finish(&Call::action("key"), caller, args, &Ok(unknown))
+            .await;
         let text = std::fs::read_to_string(dir.join("niri-computer-use/audit.jsonl")).unwrap();
         assert!(!text.contains("SENTINEL"), "{text}");
         let lines: Vec<Value> = text

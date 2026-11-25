@@ -1892,13 +1892,13 @@ impl Server {
         let result = unless_cancelled(context.ct.cancelled(), work)
             .await
             .and_then(|result| result);
-        self.log(context, &call, args(), &result);
+        self.log(context, &call, args(), &result).await;
         result
     }
 
     /// Writes a finished call to the audit log, unless the engine cut its connection: its
     /// bridge then logs it, as `engine_lost`, and the client cancelled nothing.
-    fn log(
+    async fn log(
         &self,
         context: &RequestContext<RoleServer>,
         call: &Call<'_>,
@@ -1914,7 +1914,7 @@ impl Server {
             session: &session,
             instance: instance.as_deref(),
         };
-        self.engine.audit().finish(call, caller, args, result);
+        self.engine.audit().finish(call, caller, args, result).await;
     }
 
     /// The session label: the MCP client's name and the process it started. A client of MCP
@@ -2147,7 +2147,7 @@ impl ServerHandler for Server {
             let logged = audit::refused(&given, |field| {
                 known.is_some_and(|known| known.contains_key(field))
             });
-            self.log(&context, &call, logged, &Ok(result.clone()));
+            self.log(&context, &call, logged, &Ok(result.clone())).await;
         }
         routed
     }

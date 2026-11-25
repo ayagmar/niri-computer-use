@@ -1,18 +1,108 @@
 //! Writes a saved screenshot inside the capture directory, the policy's or the default. Each subdirectory is
 //! opened without following a symlink, and the file is created exclusively without
 //! following one, so a save can't leave the directory or replace a file.
+//!
+//! The write runs on a thread of its own, one at a time, and a call waits for it at most
+//! `LIMIT`, so a capture directory on a file system that stalls, such as NFS or FUSE,
+//! never holds up the runtime and holds at most one thread.
 
+use std::fmt;
 use std::fs::{DirBuilder, File};
 use std::io::Write as _;
 use std::os::fd::OwnedFd;
 use std::os::unix::fs::DirBuilderExt as _;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::Duration;
 
 use rustix::fs::{AtFlags, Mode, OFlags};
 use rustix::io::Errno;
 
 use crate::error::{CallError, ErrorName, ToolError};
 use crate::policy::SaveTarget;
+
+/// How long a call waits for its save.
+const LIMIT: Duration = Duration::from_secs(5);
+
+/// Whether a save is running; another is refused until it ends.
+static SAVING: AtomicBool = AtomicBool::new(false);
+
+/// Writes `png` to `target` as `write` does, on a thread of its own, within `LIMIT`.
+pub(crate) async fn write_off_runtime(
+    target: &SaveTarget,
+    png: Vec<u8>,
+) -> Result<PathBuf, CallError> {
+    let owned = target.clone();
+    match off_runtime(&SAVING, LIMIT, move || write(&owned, &png)).await {
+        Ok(written) => written,
+        Err(stalled @ Stalled::Late(_)) => Err(ToolError::new(
+            ErrorName::DeadlineExceeded,
+            format!("save {}: {stalled}", target.dir.display()),
+        )
+        .into()),
+        Err(stalled) => Err(failed(&target.dir, &stalled.to_string())),
+    }
+}
+
+/// Why a job run off the runtime gave no answer.
+#[derive(Debug, PartialEq, Eq)]
+enum Stalled {
+    /// The last job hasn't ended.
+    Busy,
+    /// The job took longer than this.
+    Late(Duration),
+    /// The job's thread ended without an answer.
+    Ended,
+    /// The thread couldn't be started.
+    Unstarted(String),
+}
+
+impl fmt::Display for Stalled {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Busy => f.write_str(
+                "the last save hasn't finished, as on a stalled file system; nothing was saved",
+            ),
+            Self::Late(limit) => write!(
+                f,
+                "took over {} ms, as on a stalled file system; the file may still appear",
+                limit.as_millis()
+            ),
+            Self::Ended => f.write_str("the save's thread ended without an answer"),
+            Self::Unstarted(error) => write!(f, "couldn't start the save's thread: {error}"),
+        }
+    }
+}
+
+/// Runs `job` on a thread of its own while `busy` is clear, and waits for it at most
+/// `limit`. A job that runs past it keeps `busy` set until it ends.
+async fn off_runtime<T: Send + 'static>(
+    busy: &'static AtomicBool,
+    limit: Duration,
+    job: impl FnOnce() -> T + Send + 'static,
+) -> Result<T, Stalled> {
+    if busy.swap(true, Ordering::AcqRel) {
+        return Err(Stalled::Busy);
+    }
+    let (sent, received) = tokio::sync::oneshot::channel();
+    let spawned = std::thread::Builder::new()
+        .name("save".to_owned())
+        .spawn(move || {
+            let done = job();
+            busy.store(false, Ordering::Release);
+            // The call may have stopped waiting; the job's work is done all the same.
+            let _ignored = sent.send(done);
+        });
+    if let Err(error) = spawned {
+        busy.store(false, Ordering::Release);
+        return Err(Stalled::Unstarted(error.to_string()));
+    }
+    match tokio::time::timeout(limit, received).await {
+        Ok(Ok(done)) => Ok(done),
+        Ok(Err(_)) => Err(Stalled::Ended),
+        Err(_) => Err(Stalled::Late(limit)),
+    }
+}
 
 /// Writes `png` to `target`, creating the capture directory with mode `0700` if it is
 /// missing, and returns the file's path. The file gets mode `0600`.
@@ -86,6 +176,28 @@ mod tests {
     use super::*;
     use crate::policy::SavePath;
     use crate::test_support::fresh_dir;
+
+    /// A save that stalls, as on a capture directory over NFS, ends the call at its limit,
+    /// refuses the next one while it still runs, and lets saves through once it ends.
+    #[tokio::test]
+    async fn a_stalled_save_ends_the_call_at_its_limit_and_holds_one_thread() {
+        static BUSY: AtomicBool = AtomicBool::new(false);
+        let (release, stalled) = std::sync::mpsc::channel::<()>();
+        let limit = Duration::from_millis(50);
+        let started = std::time::Instant::now();
+
+        let first = off_runtime(&BUSY, limit, move || stalled.recv().is_ok()).await;
+
+        assert_eq!(first, Err(Stalled::Late(limit)));
+        assert!(started.elapsed() < Duration::from_secs(2));
+        assert_eq!(off_runtime(&BUSY, limit, || true).await, Err(Stalled::Busy));
+        release.send(()).unwrap();
+        let by = std::time::Instant::now() + Duration::from_secs(5);
+        while BUSY.load(Ordering::Acquire) && std::time::Instant::now() < by {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+        assert_eq!(off_runtime(&BUSY, limit, || 7).await, Ok(7));
+    }
 
     fn target(dir: &Path, path: &str) -> SaveTarget {
         SaveTarget {
