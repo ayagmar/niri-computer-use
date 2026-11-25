@@ -110,6 +110,7 @@ pub(crate) fn supervise(
                     }),
                 ServerChecks::Multi => crate::input::multi::run(&mut session, server),
                 ServerChecks::Overlay => crate::input::overlay::run(&mut session, server, scale),
+                ServerChecks::Desk => crate::desk::run(&mut session, server),
                 ServerChecks::Upgrade => probes
                     .from
                     .ok_or_else(|| Failure::new("--upgrade needs a release"))

@@ -36,6 +36,7 @@ const CHROMIUM_DEADLINE: Duration = Duration::from_secs(240);
 const COMPAT_DEADLINE: Duration = Duration::from_secs(130);
 const MULTI_DEADLINE: Duration = Duration::from_secs(150);
 const OVERLAY_DEADLINE: Duration = Duration::from_secs(200);
+const DESK_DEADLINE: Duration = Duration::from_secs(200);
 /// Two installs, one of them downloaded, and the checks between them.
 const UPGRADE_DEADLINE: Duration = Duration::from_secs(240);
 /// The agent's twelve minutes, with the fixtures and Noctalia around it.
@@ -123,6 +124,8 @@ pub(crate) enum ServerChecks {
     Multi,
     /// The Noctalia plugin's robot overlay, on the same two outputs as `Multi`.
     Overlay,
+    /// A background desk inside the nested niri.
+    Desk,
 }
 
 impl ServerChecks {
@@ -143,6 +146,7 @@ impl ServerChecks {
             Self::Upgrade => "--upgrade",
             Self::Multi => "--multi",
             Self::Overlay => "--overlay",
+            Self::Desk => "--desk",
         }
     }
 
@@ -163,6 +167,7 @@ impl ServerChecks {
             Self::Upgrade,
             Self::Multi,
             Self::Overlay,
+            Self::Desk,
         ]
         .into_iter()
         .find(|checks| checks.flag() == flag)
@@ -183,12 +188,27 @@ impl ServerChecks {
             Self::Upgrade => UPGRADE_DEADLINE,
             Self::Multi => MULTI_DEADLINE,
             Self::Overlay => OVERLAY_DEADLINE,
+            Self::Desk => DESK_DEADLINE,
         }
     }
 }
 
 pub(crate) fn run(options: &Options) -> Result<()> {
-    run_named(options, &stamp()?)
+    let stamp = stamp()?;
+    if options.server == Some(ServerChecks::Desk) {
+        return run_named(options, &short(&stamp));
+    }
+    run_named(options, &stamp)
+}
+
+/// A stamp short enough that a desk's sockets fit under `TEST_DIR`'s runtime directory:
+/// the last six digits of the time and the PID.
+fn short(stamp: &str) -> String {
+    let (seconds, pid) = stamp.split_once('-').unwrap_or((stamp, ""));
+    let seconds = seconds
+        .get(seconds.len().saturating_sub(6)..)
+        .unwrap_or(seconds);
+    format!("d{seconds}-{pid}")
 }
 
 /// As [`run`], with the run's directories named `stamp`, such as `harness matrix` gives

@@ -31,14 +31,16 @@ mode = sys.argv[2]
 if mode not in ("button", "entry", "a11y", "list", "copy"):
     raise RuntimeError(f"unknown fixture {mode}")
 run = root / "run"
+# Inside a desk, the runtime directory is the desk's, under the nested session's.
+runtime = Path(os.environ["XDG_RUNTIME_DIR"])
+if runtime != run and runtime.parent != run / "ncu-d":
+    raise RuntimeError("runtime is not nested")
 for name in ("NIRI_SOCKET", "WAYLAND_DISPLAY"):
     endpoint = Path(os.environ[name])
     if not endpoint.is_absolute():
-        endpoint = run / endpoint
-    if not endpoint.resolve(strict=True).is_relative_to(run):
+        endpoint = runtime / endpoint
+    if not endpoint.resolve(strict=True).is_relative_to(runtime):
         raise RuntimeError(f"{name} is not nested")
-if Path(os.environ["XDG_RUNTIME_DIR"]) != run:
-    raise RuntimeError("runtime is not nested")
 
 os.environ["HOME"] = str(root)
 os.environ["GDK_BACKEND"] = "wayland"
