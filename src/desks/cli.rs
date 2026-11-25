@@ -13,8 +13,8 @@ use super::layout::{Desks, Layout};
 use super::name::DeskName;
 use super::programs::{ACCESSIBILITY_DIRS, Programs};
 use super::record::{self, Mode, Phase, Record, Size, Supervisor};
-use super::scope::{self, Generation};
-use super::serial::Held;
+use super::scope::{self, Generation, Reconciled};
+use super::serial::{Handed, Held};
 use super::steps::Plan;
 use super::{environment, supervisor};
 use crate::control::procs;
@@ -59,6 +59,12 @@ pub(crate) enum Command {
     },
     /// cage's client, which lives as long as cage.
     Hold,
+    /// What stops the scope of the start `generation` once its supervisor is gone.
+    Guard {
+        supervisor: u32,
+        name: DeskName,
+        generation: Generation,
+    },
 }
 
 pub(crate) const USAGE: &str =
@@ -89,6 +95,11 @@ pub(crate) fn parse(args: &[OsString]) -> Result<Command, String> {
         ["stop", name] => Ok(Command::Stop(DeskName::parse(name)?)),
         ["list"] => Ok(Command::List),
         ["hold"] => Ok(Command::Hold),
+        ["guard", supervisor, name, generation] => Ok(Command::Guard {
+            supervisor: supervisor.parse().map_err(|_| USAGE.to_owned())?,
+            name: DeskName::parse(name)?,
+            generation: Generation::parse(generation)?,
+        }),
         ["supervise", name, mode, size, generation] => Ok(Command::Supervise {
             name: DeskName::parse(name)?,
             mode: match *mode {
@@ -137,8 +148,8 @@ fn start_args(args: &[&str]) -> Result<Command, String> {
     }
 }
 
-/// Runs a `desk` subcommand other than `exec` and `hold`, which `main` runs before anything
-/// else.
+/// Runs a `desk` subcommand other than `exec`, `hold` and `guard`, which `main` runs
+/// before anything else.
 pub(crate) async fn run(env: &Env, command: Command) -> Result<(), String> {
     match command {
         Command::Start { name, mode, size } => start(env, &name, mode, size).await,
@@ -150,7 +161,7 @@ pub(crate) async fn run(env: &Env, command: Command) -> Result<(), String> {
             size,
             generation,
         } => supervise(env, name, mode, size, generation).await,
-        Command::Exec { .. } | Command::Hold => Err(USAGE.to_owned()),
+        Command::Exec { .. } | Command::Hold | Command::Guard { .. } => Err(USAGE.to_owned()),
     }
 }
 
@@ -201,8 +212,10 @@ async fn start(env: &Env, name: &DeskName, mode: Mode, size: Size) -> Result<(),
                 record.supervisor.pid
             ));
         }
-        Liveness::Stale => teardown(name, &layout, &held, until).await?,
-        Liveness::Absent => {}
+        // A start whose directory is gone may still have a scope: its latest, by the lock.
+        Liveness::Stale | Liveness::Absent => {
+            teardown(name, &layout, &held, until).await?;
+        }
     }
     let path = std::env::var_os("PATH").unwrap_or_default();
     Programs::find(&path, &accessibility_dirs(), mode)?;
@@ -214,7 +227,7 @@ async fn start(env: &Env, name: &DeskName, mode: Mode, size: Size) -> Result<(),
         .map_err(|error| format!("create {}: {error}", log_path.display()))?;
     let args = scope_args(name, mode, size, &generation);
     let (mut child, stdout) =
-        crate::runner::desk::supervisor(&args, log).map_err(|error| error.detail)?;
+        crate::runner::desk::supervisor(&args, held.share()?, log).map_err(|error| error.detail)?;
     let logs = logs.display();
     let failure = match tokio::time::timeout_at(until, follow(name, stdout)).await {
         // The supervisor runs on, in its scope.
@@ -237,16 +250,14 @@ async fn start(env: &Env, name: &DeskName, mode: Mode, size: Size) -> Result<(),
         }
     };
     // A failed desk's error is told once all of it has stopped and its directory is gone.
+    // A supervisor that exited before it made the directory may still have left its guard,
+    // or anything else, in its scope.
     let stop_until = Instant::now() + STOP;
-    let exited = tokio::time::timeout_at(stop_until - SCOPE_STOP, child.wait())
+    tokio::time::timeout_at(stop_until - SCOPE_STOP, child.wait())
         .await
-        .is_ok_and(|waited| waited.is_ok());
-    // A supervisor that exited before it made the directory started nothing.
-    if exited && !layout.root().exists() {
-        return Err(failure);
-    }
+        .ok();
     match teardown(name, &layout, &held, stop_until).await {
-        Ok(()) => Err(failure),
+        Ok(_) => Err(failure),
         Err(left) => Err(format!("{failure}; {left}")),
     }
 }
@@ -302,66 +313,99 @@ async fn follow(
     Err(None)
 }
 
+/// What `desk stop` found of the desk under its lock.
+enum Found {
+    Running,
+    /// A directory without a supervisor.
+    Stale,
+    /// No directory, but a start is recorded: its scope may still run.
+    Recorded,
+}
+
 /// `desk stop`: asks a running desk's supervisor to stop it, then stops its scope, checks
 /// nothing is left in it, and removes its directory, all within `STOP` and under its
-/// lock. Fails, keeping the directory and its record, when anything is left.
+/// lock. Fails, keeping the directory and its record, when anything is left. A desk with
+/// no directory still has the scope of its latest start stopped, if systemd knows it.
 async fn stop(env: &Env, name: &DeskName) -> Result<(), String> {
     let desks = desks(env)?;
     let layout = desks.desk(name)?;
     let until = Instant::now() + STOP;
     let held = Held::take(&desks, name, LOCK_WAIT).await?;
-    let running = match liveness(&layout) {
-        Liveness::Absent => return Err(format!("there is no desk {name}")),
-        Liveness::Stale => false,
+    let no_desk = || format!("there is no desk {name}");
+    let found = match liveness(&layout) {
+        Liveness::Absent if held.generation()?.is_none() => return Err(no_desk()),
+        Liveness::Absent => Found::Recorded,
+        Liveness::Stale => Found::Stale,
         Liveness::Running(record) => {
             let orderly = until - SCOPE_STOP;
             tokio::time::timeout_at(orderly, ask_stop(&layout))
                 .await
                 .ok();
             gone(record.supervisor, orderly).await;
-            true
+            Found::Running
         }
     };
-    teardown(name, &layout, &held, until).await?;
-    if running {
-        cli::say(&format!("desk {name} stopped"));
-    } else {
-        cli::say(&format!(
+    let said = match (found, teardown(name, &layout, &held, until).await?) {
+        (Found::Running, _) => format!("desk {name} stopped"),
+        (Found::Stale, _) => format!(
             "desk {name} wasn't running; stopped its scope and removed what it left in {}",
             layout.root().display()
-        ));
-    }
+        ),
+        (Found::Recorded, Reconciled::NotLoaded) => return Err(no_desk()),
+        (Found::Recorded, Reconciled::Stopped) => format!(
+            "desk {name} had no directory, but the scope of its latest start still ran; stopped it"
+        ),
+    };
+    cli::say(&said);
     Ok(())
 }
 
 /// Stops the scope of the desk's latest start, by its record or else its lock, waits until
 /// `until` for the scope to be empty, and only then removes its directory, if it still
-/// belongs to that start. Fails, keeping the directory, when anything is left.
+/// belongs to that start. Without a record, systemd is asked first, so a scope it doesn't
+/// know costs no stop. Fails, keeping the directory, when anything is left.
 async fn teardown(
     name: &DeskName,
     layout: &Layout,
     held: &Held,
     until: Instant,
-) -> Result<(), String> {
-    let record = record::read::<Record>(&layout.record()).ok();
-    let generation = match &record {
-        Some(record) => record.generation.clone(),
-        None => held.generation()?.ok_or_else(|| {
+) -> Result<Reconciled, String> {
+    let (generation, stopped) = if let Ok(record) = record::read::<Record>(&layout.record()) {
+        let unit = scope::unit(name, &record.generation);
+        let stopped = scope::stop(&unit, Some(&record.cgroup), until).await;
+        (record.generation, stopped.map(|()| Reconciled::Stopped))
+    } else {
+        let Some(generation) = held.generation()? else {
+            return unrecorded(name, layout);
+        };
+        let stopped = scope::reconcile(&scope::unit(name, &generation), until).await;
+        (generation, stopped)
+    };
+    let stopped = stopped.map_err(|left| {
+        let again = format!("run `niri-computer-use desk stop {name}` again");
+        if layout.root().exists() {
             format!(
-                "desk {name}'s directory {} has no record, and no start of it is recorded, so its scope is unknown; remove the directory once nothing of the desk runs",
+                "desk {name} isn't known to be stopped: {left}. Its directory {} stays; {again}",
                 layout.root().display()
             )
-        })?,
-    };
-    let unit = scope::unit(name, &generation);
-    let cgroup = record.as_ref().map(|record| record.cgroup.as_str());
-    scope::stop(&unit, cgroup, until).await.map_err(|left| {
-        format!(
-            "desk {name} isn't fully stopped: {left}. Its directory and record stay in {}; run `niri-computer-use desk stop {name}` again",
-            layout.root().display()
-        )
+        } else {
+            format!("desk {name} isn't known to be stopped: {left}. Once that is fixed, {again}")
+        }
     })?;
-    remove(layout, &generation)
+    remove(layout, &generation)?;
+    Ok(stopped)
+}
+
+/// A desk with no record and no start recorded in its lock: nothing to stop when it has no
+/// directory either, else a directory whose scope is unknown.
+fn unrecorded(name: &DeskName, layout: &Layout) -> Result<Reconciled, String> {
+    if !layout.root().exists() {
+        return Ok(Reconciled::NotLoaded);
+    }
+    Err(format!(
+        "desk {name}'s directory {} has no record, and no start of it is recorded, so its scope is unknown; remove the directory once nothing of the desk runs",
+        layout.root().display()
+    ))
 }
 
 /// Removes the desk's directory if its record, when it has one, is of `generation`.
@@ -438,11 +482,21 @@ async fn supervise(
     size: Size,
     generation: Generation,
 ) -> Result<(), String> {
-    let layout = desks(env)?.desk(&name)?;
+    let desks = desks(env)?;
+    let layout = desks.desk(&name)?;
+    let lock = Handed::from_stdin(&desks, &name)?;
     let cgroup = own_scope(&scope::unit(&name, &generation))?;
+    // The guard comes before any of the desk's processes, so none can outlive the
+    // supervisor without it.
+    let me = std::process::id();
+    let guard = crate::runner::desk::guard(&crate::runner::desk::guard_args(
+        me,
+        name.as_str(),
+        generation.as_str(),
+    ))
+    .map_err(|error| error.detail)?;
     let path = std::env::var_os("PATH").unwrap_or_default();
     let programs = Programs::find(&path, &accessibility_dirs(), mode)?;
-    let me = std::process::id();
     let start_time = procs::stat(Path::new("/proc"), me)
         .map(|stat| stat.start_time)
         .ok_or("read the supervisor's own /proc entry")?;
@@ -471,7 +525,7 @@ async fn supervise(
         exe: std::env::current_exe()
             .map_err(|error| format!("find this program's file: {error}"))?,
     };
-    supervisor::run(plan, record).await
+    supervisor::run(plan, record, guard, lock).await
 }
 
 /// The supervisor's cgroup, once it is checked to be the scope `unit`'s.
@@ -608,6 +662,30 @@ mod tests {
                 args: args(&["-c", "--", "x"])
             }
         );
+    }
+
+    /// Catches a guard started with arguments its own parser reads otherwise, so it would
+    /// exit at once and leave the desk without its guard.
+    #[test]
+    fn the_guards_arguments_read_back() {
+        let started = crate::runner::desk::guard_args(4242, "web", "17");
+        let started: Vec<OsString> = started.iter().skip(1).map(OsString::from).collect();
+        assert_eq!(
+            parse(&started).unwrap(),
+            Command::Guard {
+                supervisor: 4242,
+                name: DeskName::parse("web").unwrap(),
+                generation: Generation::parse("17").unwrap(),
+            }
+        );
+        for bad in [
+            &["guard", "x", "web", "17"][..],
+            &["guard", "42", "Web", "17"],
+            &["guard", "42", "web", "1x"],
+            &["guard", "42", "web"],
+        ] {
+            assert!(parse(&args(bad)).is_err(), "{bad:?}");
+        }
     }
 
     fn record(generation: &str) -> Record {

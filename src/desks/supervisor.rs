@@ -4,9 +4,11 @@
 //! the control socket or one of its processes exits. Whatever ends it, from the moment the
 //! directory exists, one path stops it: every process in reverse order, then what they
 //! left, which the kernel gave the supervisor as their subreaper, all within one deadline,
-//! and then a check that nothing but the supervisor is left in the scope. The record says
-//! how it ended. The directory stays: `desk stop`, or the next `desk start`, removes it
-//! once the scope is stopped and empty.
+//! and then a check that nothing but the supervisor and its guard is left in the scope.
+//! The record says how it ended. The directory stays: `desk stop`, or the next `desk
+//! start`, removes it once the scope is stopped and empty. The desk's lock, which `desk
+//! start` handed it, is let go once the desk is published ready, or when the supervisor
+//! exits; its guard stops the scope once it has exited, however it exited.
 
 use std::path::Path;
 use std::time::Duration;
@@ -21,9 +23,10 @@ use tokio::time::Instant;
 use super::layout::Layout;
 use super::record::{self, Endpoints, Phase, Record, Step};
 use super::scope;
+use super::serial::Handed;
 use super::steps::{Plan, Processes};
 use crate::control::procs;
-use crate::runner::desk::DeskChild;
+use crate::runner::desk::{DeskChild, Guard};
 
 /// What `desk stop` writes to the control socket.
 pub(crate) const STOP: &str = "stop";
@@ -39,11 +42,13 @@ const SHUTDOWN: Duration = Duration::from_secs(15);
 /// The longest one progress line may take to write. A reader that stalls loses the rest.
 const PROGRESS: Duration = Duration::from_secs(1);
 
-/// The record the supervisor keeps, and the pipe it reports on.
+/// The record the supervisor keeps, the pipe it reports on, and the desk's lock until the
+/// desk is ready.
 struct Desk {
     layout: Layout,
     record: Record,
     progress: Option<pipe::Sender>,
+    lock: Option<Handed>,
 }
 
 impl Desk {
@@ -92,7 +97,8 @@ impl Desk {
     }
 
     /// Runs `start` until it gives the ready phase, unless `desk stop` asks first, and
-    /// publishes it. Then the progress pipe is closed: `desk start` has its answer.
+    /// publishes it. Then the progress pipe is closed, `desk start` has its answer, and the
+    /// lock is let go.
     async fn become_ready(
         &mut self,
         asked: &watch::Receiver<bool>,
@@ -106,6 +112,9 @@ impl Desk {
         }?;
         self.publish(ready).await?;
         self.progress = None;
+        if let Some(lock) = self.lock.take() {
+            lock.release();
+        }
         Ok(())
     }
 
@@ -144,15 +153,23 @@ impl Desk {
     }
 }
 
-/// Runs the desk as `plan` says, with `record` as its first record, until it stops.
-/// Returns why it stopped early, if it never became ready, or what its stop left.
-pub(crate) async fn run(plan: Plan, record: Record) -> Result<(), String> {
+/// Runs the desk as `plan` says, with `record` as its first record, until it stops, with
+/// `guard` left running and `lock` held until the desk is ready. Returns why it stopped
+/// early, if it never became ready, or what its stop left.
+pub(crate) async fn run(
+    plan: Plan,
+    record: Record,
+    guard: Guard,
+    lock: Handed,
+) -> Result<(), String> {
+    let guard = guard.pid().ok_or("the desk's guard has exited")?;
     let layout = plan.layout.clone();
     make_root(&layout)?;
     let mut desk = Desk {
         layout,
         record,
         progress: progress(),
+        lock: Some(lock),
     };
     let mut processes = Processes::default();
     let outcome = live(&plan, &mut desk, &mut processes).await;
@@ -165,7 +182,7 @@ pub(crate) async fn run(plan: Plan, record: Record) -> Result<(), String> {
             crate::cli::print_error(&format!("desk {} failed: {reason}", desk.record.name));
         }
     }
-    let cleaned = shutdown(&mut processes, &desk.record.cgroup).await;
+    let cleaned = shutdown(&mut processes, &desk.record.cgroup, guard).await;
     desk.finish(outcome, cleaned).await
 }
 
@@ -296,20 +313,24 @@ async fn exited(child: &mut Option<DeskChild>) -> String {
 }
 
 /// Stops every process within `SHUTDOWN`, in reverse order: niri first, then what its
-/// apps left, then the daemons, then anything left; then waits until nothing but the
-/// supervisor is in the scope's `cgroup`. `Ok` only once that is checked.
-async fn shutdown(processes: &mut Processes, cgroup: &str) -> Result<(), String> {
+/// apps left, then the daemons, then anything left but the `guard`; then waits until
+/// nothing but the supervisor and the guard is in the scope's `cgroup`. `Ok` only once
+/// that is checked. The guard stays: once the supervisor exits, it stops the scope, which
+/// then holds nothing else.
+async fn shutdown(processes: &mut Processes, cgroup: &str, guard: u32) -> Result<(), String> {
     let until = Instant::now() + SHUTDOWN;
     processes.listener = None;
     let mut errors = Vec::new();
     stop_one(&mut processes.niri, NIRI_GRACE, until, &mut errors).await;
-    sweep(&processes.pids(), until).await;
+    let mut kept = processes.pids();
+    kept.push(guard);
+    sweep(&kept, until).await;
     stop_one(&mut processes.registry, GRACE, until, &mut errors).await;
     stop_one(&mut processes.launcher, GRACE, until, &mut errors).await;
     stop_one(&mut processes.bus, GRACE, until, &mut errors).await;
     stop_one(&mut processes.cage, GRACE, until, &mut errors).await;
-    sweep(&[], until).await;
-    let emptied = emptied(cgroup, until).await;
+    sweep(&[guard], until).await;
+    let emptied = emptied(cgroup, guard, until).await;
     match (emptied, errors.is_empty()) {
         (Ok(()), _) => Ok(()),
         (Err(left), true) => Err(left),
@@ -370,16 +391,16 @@ async fn sweep(kept: &[u32], until: Instant) {
     signal(&living_children(kept), Signal::KILL);
 }
 
-/// Waits until the scope's `cgroup` holds no living process but the supervisor, killing
-/// what comes to it meanwhile, until `until`; then what is left.
-async fn emptied(cgroup: &str, until: Instant) -> Result<(), String> {
+/// Waits until the scope's `cgroup` holds no living process but the supervisor and its
+/// `guard`, killing what comes to it meanwhile, until `until`; then what is left.
+async fn emptied(cgroup: &str, guard: u32, until: Instant) -> Result<(), String> {
     let root = Path::new(scope::CGROUP_ROOT);
     let proc_root = Path::new("/proc");
     let me = std::process::id();
     loop {
         let others: Vec<u32> = scope::members(root, cgroup)?
             .into_iter()
-            .filter(|&pid| pid != me)
+            .filter(|&pid| pid != me && pid != guard)
             .filter(|&pid| procs::stat(proc_root, pid).is_some_and(|stat| !stat.exited()))
             .collect();
         if others.is_empty() {
@@ -400,7 +421,7 @@ async fn emptied(cgroup: &str, until: Instant) -> Result<(), String> {
                 named.join(", ")
             ));
         }
-        signal(&living_children(&[]), Signal::KILL);
+        signal(&living_children(&[guard]), Signal::KILL);
         tokio::time::sleep(SWEEP_POLL).await;
     }
 }
@@ -437,6 +458,7 @@ mod tests {
             },
             layout,
             progress,
+            lock: None,
         }
     }
 

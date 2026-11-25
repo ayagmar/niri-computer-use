@@ -171,6 +171,8 @@ pub(crate) fn contents(root: &Path, cgroup: &str, proc_root: &Path) -> Result<Co
 /// What `systemctl show` says about a unit.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(crate) struct Shown {
+    /// `not-found` for a unit systemd doesn't know, as a collected scope reads.
+    pub(crate) load_state: String,
     pub(crate) active_state: String,
     /// `None` once the unit has no cgroup, as when it is gone.
     pub(crate) control_group: Option<String>,
@@ -180,7 +182,9 @@ impl Shown {
     pub(crate) fn parse(text: &str) -> Self {
         let mut shown = Self::default();
         for line in text.lines() {
-            if let Some(state) = line.strip_prefix("ActiveState=") {
+            if let Some(state) = line.strip_prefix("LoadState=") {
+                state.clone_into(&mut shown.load_state);
+            } else if let Some(state) = line.strip_prefix("ActiveState=") {
                 state.clone_into(&mut shown.active_state);
             } else if let Some(group) = line.strip_prefix("ControlGroup=") {
                 shown.control_group = Some(group.to_owned()).filter(|group| !group.is_empty());
@@ -193,6 +197,44 @@ impl Shown {
     fn ended(&self) -> bool {
         matches!(self.active_state.as_str(), "inactive" | "failed")
     }
+
+    /// Whether systemd doesn't know the unit at all, so nothing runs in it.
+    fn not_loaded(&self) -> bool {
+        self.load_state == "not-found" && self.ended() && self.control_group.is_none()
+    }
+}
+
+/// What a reconciled scope was.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Reconciled {
+    /// systemd doesn't know the unit: it never ran, or it ended and was collected.
+    NotLoaded,
+    /// The unit was there; it is stopped now, and its cgroup checked empty.
+    Stopped,
+}
+
+/// Makes sure nothing runs in the scope `unit` of a start whose directory is absent: a
+/// directory's absence is no proof of that, since a supervisor may have died, or not yet
+/// run, before it made one. Asks systemd first, so a unit it doesn't know costs no stop;
+/// otherwise stops it as `stop` does. Fails when systemd can't be asked or the stop leaves
+/// something.
+pub(crate) async fn reconcile(unit: &str, until: Instant) -> Result<Reconciled, String> {
+    let shown = show(unit, until)
+        .await
+        .map_err(|error| format!("couldn't ask systemd about {unit}: {error}"))?;
+    if shown.not_loaded() {
+        return Ok(Reconciled::NotLoaded);
+    }
+    stop(unit, None, until).await.map(|()| Reconciled::Stopped)
+}
+
+/// Asks systemd to stop the scope `unit` and returns once the stop job is queued, without
+/// waiting for it: what the guard does once the supervisor is gone, since the stop ends
+/// the guard too.
+pub(crate) async fn request_stop(unit: &str, until: Instant) -> Result<(), String> {
+    systemctl(&["--no-block", "stop", unit], until)
+        .await
+        .map(drop)
 }
 
 /// Stops the scope `unit` and waits, until `until`, for its cgroup to be empty: the one
@@ -241,12 +283,7 @@ async fn check(unit: &str, recorded: Option<&str>, until: Instant) -> Result<Con
     if let Some(cgroup) = recorded {
         return contents(root, cgroup, proc_root);
     }
-    let shown = systemctl(
-        &["show", "-p", "ActiveState", "-p", "ControlGroup", unit],
-        until,
-    )
-    .await
-    .map(|text| Shown::parse(&text))?;
+    let shown = show(unit, until).await?;
     match &shown.control_group {
         Some(cgroup) => contents(root, cgroup, proc_root),
         None if shown.ended() => Ok(Contents::Empty),
@@ -255,6 +292,23 @@ async fn check(unit: &str, recorded: Option<&str>, until: Instant) -> Result<Con
             shown.active_state
         )),
     }
+}
+
+/// What systemd says about `unit` now.
+async fn show(unit: &str, until: Instant) -> Result<Shown, String> {
+    let args = [
+        "show",
+        "-p",
+        "LoadState",
+        "-p",
+        "ActiveState",
+        "-p",
+        "ControlGroup",
+        unit,
+    ];
+    systemctl(&args, until)
+        .await
+        .map(|text| Shown::parse(&text))
 }
 
 /// `systemctl --user <args>`, until `until`: its stdout, or its exit and stderr.
@@ -319,9 +373,22 @@ mod tests {
         let gone = Shown::parse("ActiveState=inactive\nControlGroup=\n");
         assert_eq!(gone.control_group, None);
         assert!(gone.ended());
-        let running = Shown::parse("ControlGroup=/a/b.scope\nActiveState=active\n");
+        assert!(
+            !gone.not_loaded(),
+            "a loaded unit that ended is stopped, not skipped"
+        );
+        let running =
+            Shown::parse("LoadState=loaded\nControlGroup=/a/b.scope\nActiveState=active\n");
         assert_eq!(running.control_group.as_deref(), Some("/a/b.scope"));
         assert!(!running.ended());
+        assert!(!running.not_loaded());
+        // What `systemctl --user show` prints for a unit it doesn't know, as systemd 262 does.
+        let unknown = Shown::parse("LoadState=not-found\nActiveState=inactive\nControlGroup=\n");
+        assert!(unknown.not_loaded());
+        let stopping = Shown::parse(
+            "LoadState=not-found\nActiveState=deactivating\nControlGroup=/a/b.scope\n",
+        );
+        assert!(!stopping.not_loaded());
     }
 
     /// Catches a stop that calls a scope empty while a process is left in it, or in a

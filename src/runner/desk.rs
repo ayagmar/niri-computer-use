@@ -3,10 +3,11 @@
 //! cgroup, and `desk stop` stops the scope. The supervisor starts each process with an
 //! exact environment, in a process group of its own, through `desk exec`, which asks the
 //! kernel to signal it when the supervisor dies (`PR_SET_PDEATHSIG`) and then becomes the
-//! program: a second line, so a killed supervisor's direct processes go at once. The
-//! signal is `SIGKILL`, but `SIGTERM` for cage, which then removes its X11 socket (see
-//! `Death`). The supervisor stops each one itself, `SIGTERM` first and with a deadline,
-//! when the desk stops.
+//! program: a second line, so a killed supervisor's direct processes go at once. The first
+//! is the supervisor's guard, `desk guard`, which stops the scope once the supervisor is
+//! gone. The signal is `SIGKILL`, but `SIGTERM` for cage, which then removes its X11
+//! socket (see `Death`). The supervisor stops each one itself, `SIGTERM` first and with a
+//! deadline, when the desk stops.
 
 use std::ffi::{OsStr, OsString};
 use std::fs::File;
@@ -22,6 +23,9 @@ use crate::error::{ErrorName, ToolError};
 /// The subcommand that sets the parent death signal and becomes a desk's program:
 /// `desk exec <supervisor pid> <KILL | TERM> -- <program> <args>`.
 pub(crate) const EXEC: [&str; 2] = ["desk", "exec"];
+/// The subcommand that stops a desk's scope once its supervisor is gone:
+/// `desk guard <supervisor pid> <name> <generation>`.
+pub(crate) const GUARD: [&str; 2] = ["desk", "guard"];
 /// What puts a desk's supervisor, and so the whole desk, in a scope of its own.
 pub(crate) const SYSTEMD_RUN: &str = "systemd-run";
 /// How long a killed process gets to be reaped.
@@ -252,11 +256,26 @@ pub(crate) fn die_with_parent_by(signal: Signal) -> Result<(), String> {
 /// Starts the desk's supervisor through `systemd-run` with `args`, which put it in a
 /// transient scope of its own and make it this binary's `desk supervise`, with the
 /// session's variables `main` resolved, in a process group of its own that outlives the
-/// caller. Its stdout is a pipe for its progress, its stderr, and `systemd-run`'s, `log`.
-pub(crate) fn supervisor(args: &[String], log: File) -> Result<(Child, ChildStdout), ToolError> {
-    let mut child = super::command(SYSTEMD_RUN)
+/// caller. Its stdin is `lock`, the desk's lock file, open and locked: the same open file
+/// as the caller's, so the lock is held from this moment while either runs. Its stdout is
+/// a pipe for its progress, its stderr, and `systemd-run`'s, `log`.
+pub(crate) fn supervisor(
+    args: &[String],
+    lock: File,
+    log: File,
+) -> Result<(Child, ChildStdout), ToolError> {
+    holding(super::command(SYSTEMD_RUN), args, lock, log)
+}
+
+fn holding(
+    mut command: Command,
+    args: &[String],
+    lock: File,
+    log: File,
+) -> Result<(Child, ChildStdout), ToolError> {
+    let mut child = command
         .args(args)
-        .stdin(Stdio::null())
+        .stdin(lock)
         .stdout(Stdio::piped())
         .stderr(log)
         .process_group(0)
@@ -276,6 +295,50 @@ pub(crate) fn supervisor(args: &[String], log: File) -> Result<(Child, ChildStdo
     Ok((child, stdout))
 }
 
+/// The supervisor's guard, which stops the desk's scope once the supervisor is gone.
+#[derive(Debug)]
+pub(crate) struct Guard {
+    /// Held unreaped, so its PID stays the guard's while the supervisor runs.
+    child: Child,
+}
+
+impl Guard {
+    pub(crate) fn pid(&self) -> Option<u32> {
+        self.child.id()
+    }
+}
+
+/// `desk guard`'s arguments: the supervisor's PID, the desk and the start's generation.
+pub(crate) fn guard_args(supervisor: u32, name: &str, generation: &str) -> Vec<String> {
+    let mut args = GUARD.map(str::to_owned).to_vec();
+    args.extend([
+        supervisor.to_string(),
+        name.to_owned(),
+        generation.to_owned(),
+    ]);
+    args
+}
+
+/// Starts the guard of the supervisor, this process, in its scope: this binary's `desk
+/// guard` with `args`, stdin and stdout closed, stderr the supervisor's log. No death
+/// signal and no process group of its own: it makes a session of its own as it starts,
+/// which needs it not to lead a group, and it outlives the supervisor on purpose.
+pub(crate) fn guard(args: &[String]) -> Result<Guard, ToolError> {
+    let child = command("/proc/self/exe")
+        .args(args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::inherit())
+        .spawn()
+        .map_err(|error| {
+            ToolError::new(
+                ErrorName::UpstreamError,
+                format!("start the desk's guard: {error}"),
+            )
+        })?;
+    Ok(Guard { child })
+}
+
 #[expect(
     clippy::disallowed_methods,
     reason = "the runner is the one place that starts processes"
@@ -292,9 +355,29 @@ fn std_command(program: &OsStr) -> std::process::Command {
     std::process::Command::new(program)
 }
 
+/// A `sleep` that is killed once dropped, and its PID, for tests that watch a process.
+#[cfg(test)]
+pub(crate) fn sleeper() -> (Child, Pid) {
+    let child = command("sleep")
+        .arg("30")
+        .stdin(Stdio::null())
+        .kill_on_drop(true)
+        .spawn()
+        .unwrap();
+    let pid = child
+        .id()
+        .and_then(|id| Pid::from_raw(id.cast_signed()))
+        .unwrap();
+    (child, pid)
+}
+
 #[cfg(test)]
 mod tests {
     use std::path::{Path, PathBuf};
+
+    use crate::desks::layout::Desks;
+    use crate::desks::name::DeskName;
+    use crate::desks::serial::Held;
 
     use super::*;
 
@@ -394,6 +477,35 @@ mod tests {
         let pid = std::fs::read_to_string(dir.join("pid")).unwrap();
         let pid = Pid::from_raw(pid.trim().parse().unwrap()).unwrap();
         rustix::process::kill_process(pid, Signal::KILL).unwrap();
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// Catches a start whose lock lapses when its command is killed while the supervisor
+    /// starts: the supervisor's stdin is the lock's own open file, so the lock stays held
+    /// until the supervisor exits too.
+    #[tokio::test]
+    async fn the_supervisor_holds_the_lock_once_its_start_is_gone() {
+        let dir = crate::test_support::short_dir("handed");
+        let desks = Desks::of(&dir);
+        let name = DeskName::parse("web").unwrap();
+        let held = Held::take(&desks, &name, Duration::ZERO).await.unwrap();
+        let log = File::create(dir.join("log")).unwrap();
+        let mut supervisor = command("sh");
+        supervisor.kill_on_drop(true);
+        let args = ["-c".to_owned(), "exec sleep 1".to_owned()];
+        let (mut child, _stdout) = holding(supervisor, &args, held.share().unwrap(), log).unwrap();
+        drop(held);
+        let refused = Held::take(&desks, &name, Duration::from_millis(200))
+            .await
+            .unwrap_err();
+        assert!(refused.contains("in progress"), "{refused}");
+        tokio::time::timeout(DEADLINE, child.wait())
+            .await
+            .unwrap()
+            .unwrap();
+        Held::take(&desks, &name, Duration::from_secs(1))
+            .await
+            .unwrap();
         std::fs::remove_dir_all(dir).unwrap();
     }
 

@@ -458,6 +458,17 @@ async fn desk_process(command: &desks::cli::Command) -> Option<ExitCode> {
                 Some(ExitCode::FAILURE)
             }
         },
+        desks::cli::Command::Guard {
+            supervisor,
+            name,
+            generation,
+        } => match desks::guard::run(*supervisor, name, generation).await {
+            Ok(()) => Some(ExitCode::SUCCESS),
+            Err(error) => {
+                cli::print_error(&error);
+                Some(ExitCode::FAILURE)
+            }
+        },
         desks::cli::Command::Start { .. }
         | desks::cli::Command::Stop(_)
         | desks::cli::Command::List
