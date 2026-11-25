@@ -24,6 +24,10 @@ A desk runs four programs besides niri, and `desk start` names any it can't find
 
 Only `desk start` needs them; the rest of the server doesn't.
 
+A desk also needs your systemd user manager: `desk start` runs the desk in a scope of its own with `systemd-run --user --scope`, and `desk stop` stops it with `systemctl --user`. Without a user manager, `desk start` exits 1 with what `systemd-run` said, such as `Failed to connect to user scope bus via local transport: No such file or directory`.
+
+`desk start` also records where your lock state is read, and refuses when there is nowhere: your niri has to run as a logind session (`niri --session`), or Noctalia has to be installed.
+
 ## Start, list and stop
 
 ```sh
@@ -62,11 +66,13 @@ niri-computer-use desk list
 niri-computer-use desk stop web
 ```
 
-`desk list` prints every desk as JSON, with `running` and its record. `desk stop` stops every process of the desk, the apps the agent launched included, and removes its directory; it took 0.2 s here. On a desk whose processes are already gone, it removes what they left.
+`desk list` prints every desk as JSON, with `running` and its record. `desk stop` stops every process of the desk, the apps the agent launched included, checks that nothing of the desk is left, and only then removes its directory; it took 0.2 s here. If anything is left after 30 seconds, it says what, keeps the desk's directory and record, and exits 1; run it again.
 
 A desk that fails to start is stopped whole before `desk start` exits 1 with the failed step and why. Each process's log is in `~/.local/state/niri-computer-use/desks/<name>/` (or under `$XDG_STATE_HOME`), which stays after the desk stops.
 
-The desk's processes run under one supervisor. If the supervisor is killed, the kernel kills them with it.
+The whole desk runs in a systemd user scope of its own, `ncu-desk-<name>-<generation>.scope`, so every process the desk's apps start stays in it, however it forks. If the desk's supervisor is killed, its own processes die with it; an app's helper that runs on is still in the scope, and `desk stop` stops the scope, which ends it. Here, with a helper that ignores `SIGTERM` left behind, that took 5.3 s: systemd sends `SIGKILL` five seconds after `SIGTERM`. A desk that stops by itself, because its niri exited, keeps its directory, with its record saying why, until `desk stop` or the next `desk start` of that name.
+
+One `desk start` or `desk stop` of a desk runs at a time. Another of the same desk waits up to five seconds, then exits 1. Each desk's lock is a small file, `$XDG_RUNTIME_DIR/ncu-d/.<name>.lock`, that stays.
 
 ## Serve an agent on a desk
 
@@ -82,7 +88,7 @@ What the server uses on a desk:
 
 | From the desk | From your session |
 |---|---|
-| niri, its windows, workspaces and outputs | the lock state: logind's hint for your niri and your Noctalia |
+| niri, its windows, workspaces and outputs | the lock state: the logind session and Noctalia socket `desk start` found |
 | the Wayland display, for screenshots, input and the clipboard | the stop key, read from your niri's config |
 | the session bus and the accessibility bus | notifications (`notify_on_lease`, `confirm_lease`) |
 | the lease, the stop flag and the input-dirty marker | the policy file, the audit log and `systemd-run` |
@@ -106,13 +112,13 @@ A desk's directory is `$XDG_RUNTIME_DIR/ncu-d/<name>/`, and `desk stop` removes 
 
 ## Lock, stop and resume
 
-While your screen is locked, or its lock state is unknown, a desk's server refuses actions with `screen_locked`. Screenshots, accessible names and window titles follow your lock state the same way they do on your desktop. There is no setting that lets an agent act on a desk while your screen is locked.
+While your screen is locked, or its lock state is unknown, a desk's server refuses actions with `screen_locked`. It reads your lock state from exactly the sources `desk start` recorded in the desk's `host.json`, whatever its own environment would find. If a recorded source can't be read, the state is unknown, unless the other one says locked. Screenshots, accessible names and window titles follow your lock state the same way they do on your desktop. There is no setting that lets an agent act on a desk while your screen is locked.
 
 `niri-computer-use stop`, and so your stop key, stops every desk's agent as well as your desktop's: it sets your instance's stop flag and a flag in `$XDG_RUNTIME_DIR/ncu-d/` that every desk's server checks before it admits an action and before each batch of input. `resume` clears both, your instance's first. It never clears a desk's input-dirty marker; `recover --desk <name>` does, for that desk.
 
 ## The responsiveness check
 
-niri drawing into another compositor waits for that compositor's frames unless the GPU driver's swap interval is off, so a desk's niri always gets `__GL_SYNC_TO_VBLANK=0` (NVIDIA) and `vblank_mode=0` (Mesa). Before a desk is ready, the supervisor measures 40 round trips to its niri. If the 95th percentile is over 5 ms, the desk is stopped and `desk start` fails with the numbers; there is no fallback. Here a ready headless desk answered in 0.6 ms at the 95th percentile.
+niri drawing into another compositor waits for that compositor's frames unless the GPU driver's swap interval is off, so a desk's niri always gets `__GL_SYNC_TO_VBLANK=0` (NVIDIA) and `vblank_mode=0` (Mesa). Before a desk is ready, the supervisor measures 40 round trips to its niri. If the 95th percentile is over 5 ms, or any one round trip takes over a second, the desk is stopped and `desk start` fails with the numbers; there is no fallback. Here a ready headless desk answered in 0.6 ms at the 95th percentile.
 
 ## Windowed desks
 

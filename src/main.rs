@@ -172,12 +172,7 @@ impl Env {
             .runtime_dir
             .as_deref()
             .ok_or_else(|| format!("XDG_RUNTIME_DIR isn't known, so desk {name} can't be found"))?;
-        let joined = desks::join::join(
-            runtime,
-            name,
-            self.desktop.noctalia.is_some(),
-            desks::cli::alive,
-        )?;
+        let joined = desks::join::join(runtime, name, desks::cli::alive)?;
         let overlay = joined.overlay();
         let env = Self::from_vars(
             |key| overlay.get(key).cloned().or_else(|| var(key)),
@@ -447,10 +442,13 @@ async fn desk_process(command: &desks::cli::Command) -> Option<ExitCode> {
     match command {
         desks::cli::Command::Exec {
             parent,
+            death,
             program,
             args,
         } => {
-            cli::print_error(&runner::desk::exec_dying_with(*parent, program, args));
+            cli::print_error(&runner::desk::exec_dying_with(
+                *parent, *death, program, args,
+            ));
             Some(ExitCode::FAILURE)
         }
         desks::cli::Command::Hold => match desks::hold::run(|name| std::env::var_os(name)).await {
@@ -744,7 +742,11 @@ mod tests {
         use crate::control::runtime::RuntimeDir;
         let dir = test_support::short_dir("stop-all");
         let host = test_support::niri_env(&dir);
-        let desk = test_support::desk_env(&dir, dir.join("niri.test.sock"), None);
+        let desk = test_support::desk_env(
+            &dir,
+            dir.join("niri.test.sock"),
+            desks::record::LockSources::default(),
+        );
         let (host_runtime, desk_runtime) = (
             RuntimeDir::of(&host).unwrap(),
             RuntimeDir::of(&desk).unwrap(),
@@ -797,6 +799,8 @@ mod tests {
                 pid: me,
                 start_time,
             },
+            generation: desks::scope::Generation::parse("1").unwrap(),
+            cgroup: "/app.slice/ncu-desk-web-1.scope".to_owned(),
             started: String::new(),
             phase,
         };
@@ -806,6 +810,10 @@ mod tests {
             niri_socket: Some(dir.join("niri.wayland-0.3.sock")),
             wayland_display: Some("wayland-0".to_owned()),
             session_bus: Some("unix:path=/host/bus".to_owned()),
+            lock: record::LockSources {
+                logind_session: Some("4".to_owned()),
+                noctalia: Some(dir.join("noctalia-wayland-0.sock")),
+            },
         };
         record::write(&layout.host(), &host).unwrap();
         sockets.into()
@@ -813,19 +821,17 @@ mod tests {
 
     /// Catches a desk's server that reads the desk's niri for the lock state and the stop
     /// key, which no lock screen ever locks, or the host's niri, display or session bus
-    /// for what it drives; and children that lose the host's bus for notifications.
+    /// for what it drives; one that drops the host's recorded Noctalia because its own
+    /// search finds no Noctalia; and children that lose the host's bus for notifications.
     #[tokio::test]
     async fn a_joined_desk_drives_the_desk_and_keeps_the_hosts_lock_sources() {
         let dir = test_support::short_dir("env-desk");
         std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700)).unwrap();
         let _sockets = ready_desk(&dir);
         let root = dir.join("ncu-d/web");
+        // This server's own search finds no Noctalia.
         let host = Env {
             runtime_dir: Some(dir.clone()),
-            desktop: runner::Desktop {
-                noctalia: Some("/usr/bin/noctalia".into()),
-                ..runner::Desktop::default()
-            },
             ..Env::default()
         };
         let roots = discover::Roots {
@@ -845,8 +851,9 @@ mod tests {
         let host_niri = dir.join("niri.wayland-0.3.sock");
         assert_eq!(env.host_niri.path().unwrap(), host_niri.as_path());
         assert_eq!(env.desktop.noctalia, None);
-        let noctalia = env.desk().unwrap().host_noctalia.clone();
-        assert_eq!(noctalia, Some(dir.join("noctalia-wayland-0.sock")));
+        let lock = env.desk().unwrap().host.lock.clone();
+        assert_eq!(lock.noctalia, Some(dir.join("noctalia-wayland-0.sock")));
+        assert_eq!(lock.logind_session.as_deref(), Some("4"));
         let children: std::collections::BTreeMap<_, _> = env.session_vars().into_iter().collect();
         assert_eq!(children["NIRI_SOCKET"], niri.as_os_str());
         assert_eq!(children["DBUS_SESSION_BUS_ADDRESS"], "unix:path=/host/bus");

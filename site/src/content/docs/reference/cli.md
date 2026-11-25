@@ -130,7 +130,7 @@ niri-computer-use desk list
 niri-computer-use desk stop web
 ```
 
-Start, list and stop [background desks](../../concepts/desks/). `desk start` prints each step to stderr and the desk's record as JSON once it is ready, and exits 1 with the failed step when it isn't, after stopping what it started. `desk list` prints every desk as JSON. `desk stop` stops a desk and removes its directory, and exits 1 when there is no such desk.
+Start, list and stop [background desks](../../concepts/desks/). `desk start` prints each step to stderr and the desk's record as JSON once it is ready, and exits 1 with the failed step when it isn't, after stopping what it started. `desk list` prints every desk as JSON. `desk stop` stops a desk, its systemd scope included, and removes its directory once the scope is empty. It exits 1 when there is no such desk, and when something of the desk is left, which it names, keeping the directory.
 
 ## `--version`
 
@@ -147,7 +147,7 @@ You don't run these yourself.
 - `engine` is the shared engine `serve` starts in [shared mode](../../concepts/configuration/#shared) when its niri instance has none. It serves every shared-mode client of the instance over `engine.sock` in the runtime directory, writes its errors to `engine.log` there, and exits two seconds after its last connection, lease and pending input cleanup have ended. A bridge passes it `--unscoped <reason>` when it couldn't start the engine in a scope of its own, and `--runtime-dir-discovered` when it found `XDG_RUNTIME_DIR` itself; both only change what `status` reports.
 - `guard <server-pid>` is the crash guardian a standalone `serve` or the shared engine starts. It waits for that server to end, and if the server's marker names native keys or pointer buttons it still held, releases them at once. As it starts, it does the same for a marker a dead server left that nothing released.
 - `paste-keeper` is the clipboard keeper a paste through `type_text` starts. It holds the pasted text on the clipboard, then puts the saved clipboard back.
-- `desk supervise <name> <mode> <size>` is the supervisor `desk start` starts, which runs the desk until it stops. `desk exec <supervisor-pid> -- <program> <args>` asks the kernel to kill the process when the supervisor dies, then becomes the program. `desk hold` is cage's one client, which keeps cage running until it stops.
+- `desk supervise <name> <mode> <size> <generation>` is the supervisor `desk start` starts in the desk's systemd scope, which runs the desk until it stops. `desk exec <supervisor-pid> <KILL|TERM> -- <program> <args>` asks the kernel to send that signal to the process when the supervisor dies, then becomes the program. `desk hold` is cage's one client, which keeps cage running until it stops.
 
 ## Exit status and errors
 

@@ -251,20 +251,16 @@ pub(crate) async fn collect(env: &Env, sources: Sources<'_>) -> Status {
             None
         }
     };
-    let (version, outputs, noctalia, logind, host_noctalia, stop_key, desktop_entries) = tokio::join!(
+    let (version, outputs, noctalia, reading, stop_key, desktop_entries) = tokio::join!(
         niri::version(socket),
         niri::outputs(socket),
         noctalia,
-        control::logind(&env.host_niri, &env.desktop),
-        control::host_noctalia(env),
+        control::Reading::of(env),
         stop_key_of(reader, &env.host_niri, config_failed),
         apps::listing(policy, apps, place)
     );
-    let noctalia_status = host_noctalia
-        .as_ref()
-        .or(noctalia.as_ref())
-        .and_then(|reply| reply.as_ref().ok());
-    let lock = control::lock(logind, noctalia_status);
+    let noctalia_status = noctalia.as_ref().and_then(|reply| reply.as_ref().ok());
+    let lock = reading.lock(noctalia_status);
     let display_error = env.display.checked(socket).await.err();
     let (presence, noctalia_error) = presence(noctalia);
     Status {

@@ -22,7 +22,7 @@ use std::time::Duration;
 use serde::Serialize;
 use serde_json::{Map, Value};
 
-use crate::error::ToolError;
+use crate::desks::record;
 use crate::niri::Socket;
 use crate::runner::{self, Desktop, Search};
 use crate::{Env, niri, noctalia};
@@ -53,6 +53,9 @@ pub(crate) struct Lock {
     session: Option<String>,
     /// Why logind couldn't answer, when it couldn't.
     logind_error: Option<String>,
+    /// For a desk: why the host's recorded Noctalia couldn't answer, when it couldn't.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    noctalia_error: Option<String>,
 }
 
 impl Lock {
@@ -71,27 +74,132 @@ pub(crate) struct LockSources<'a> {
 
 impl LockSources<'_> {
     /// The lock state from reads started now, side by side: Noctalia's status and logind's
-    /// hint. A desk's is the host session's.
+    /// hint. A desk's is the host session's, from the sources its `host.json` records.
     pub(crate) async fn read(self) -> Lock {
         let status = async {
-            if self.env.desk().is_some() {
-                host_noctalia(self.env).await.and_then(Result::ok)
-            } else if self.noctalia {
+            if self.noctalia && self.env.desk().is_none() {
                 noctalia::status(self.env).await.ok()
             } else {
                 None
             }
         };
-        let (status, logind) = tokio::join!(status, logind(&self.env.host_niri, &self.env.desktop));
-        lock(logind, status.as_ref())
+        let (status, reading) = tokio::join!(status, Reading::of(self.env));
+        reading.lock(status.as_ref())
     }
 }
 
-/// For a desk, the host's Noctalia's status, which its lock state follows; `None` on the
-/// host, whose Noctalia is read as its shell, and for a host without Noctalia.
-pub(crate) async fn host_noctalia(env: &Env) -> Option<Result<Map<String, Value>, ToolError>> {
-    let socket = env.desk()?.host_noctalia.as_deref()?;
-    Some(noctalia::status_at(socket).await)
+/// What the lock state is made of, but the host's own shell status, which its callers
+/// read anyway: logind's answer on the host; the whole state for a desk.
+#[derive(Debug)]
+pub(crate) enum Reading {
+    Host(Logind),
+    Desk(Lock),
+}
+
+impl Reading {
+    pub(crate) async fn of(env: &Env) -> Self {
+        match env.desk() {
+            Some(desk) => Self::Desk(desk_lock(&desk.host.lock, &env.desktop).await),
+            None => Self::Host(logind(&env.host_niri, &env.desktop).await),
+        }
+    }
+
+    /// The lock state, with the host's Noctalia `status` on the host; a desk never reads
+    /// its own.
+    pub(crate) fn lock(self, status: Option<&Map<String, Value>>) -> Lock {
+        match self {
+            Self::Host(logind) => lock(logind, status),
+            Self::Desk(lock) => lock,
+        }
+    }
+}
+
+/// Where a desk's `host.json` says the host's lock state is read: the logind session the
+/// host's niri sets its hint on, and the host's Noctalia's socket when the host has
+/// Noctalia. Refused when neither exists, since a desk's server could never act.
+pub(crate) async fn host_lock_sources(env: &Env) -> Result<record::LockSources, String> {
+    let session = niri_session(&env.host_niri).await;
+    let noctalia = env
+        .desktop
+        .noctalia
+        .is_some()
+        .then(|| noctalia::socket(env))
+        .flatten();
+    match (session, noctalia) {
+        (Err(error), None) => Err(format!(
+            "a desk's server follows the host's lock state, and the host has no source of it: logind: {error}; Noctalia: not installed"
+        )),
+        (session, noctalia) => Ok(record::LockSources {
+            logind_session: session.ok(),
+            noctalia,
+        }),
+    }
+}
+
+/// A desk's lock state, from exactly the host's recorded `sources`. A recorded source that
+/// can't be read leaves the state unknown, unless the other says locked.
+async fn desk_lock(sources: &record::LockSources, desktop: &Desktop) -> Lock {
+    let logind = async {
+        match &sources.logind_session {
+            Some(id) => Some(locked_hint(desktop, id).await),
+            None => None,
+        }
+    };
+    let noctalia = async {
+        match &sources.noctalia {
+            Some(socket) => Some(noctalia_locked(socket).await),
+            None => None,
+        }
+    };
+    let (logind, noctalia) = tokio::join!(logind, noctalia);
+    Lock {
+        session: sources.logind_session.clone(),
+        ..decide_desk(logind.as_ref(), noctalia.as_ref())
+    }
+}
+
+/// Noctalia's `locked` at `socket`.
+async fn noctalia_locked(socket: &Path) -> Result<bool, String> {
+    let status = noctalia::status_at(socket)
+        .await
+        .map_err(|error| error.detail)?;
+    status
+        .get("locked")
+        .and_then(Value::as_bool)
+        .ok_or_else(|| {
+            format!(
+                "Noctalia's status at {} says nothing of locked",
+                socket.display()
+            )
+        })
+}
+
+/// A desk's lock state from its recorded sources' answers, `None` for one not recorded:
+/// locked if either says so; else unknown if either couldn't answer, or none was
+/// recorded; else unlocked.
+fn decide_desk(
+    logind: Option<&Result<bool, String>>,
+    noctalia: Option<&Result<bool, String>>,
+) -> Lock {
+    let error = |read: Option<&Result<bool, String>>| read.and_then(|read| read.clone().err());
+    let lock = |state, source| Lock {
+        state,
+        source,
+        session: None,
+        logind_error: error(logind),
+        noctalia_error: error(noctalia),
+    };
+    match (logind, noctalia) {
+        (Some(Ok(true)), _) => lock(LockState::Locked, LockSource::Logind),
+        (_, Some(Ok(true))) => lock(LockState::Locked, LockSource::Noctalia),
+        (Some(Err(_)), _) | (_, Some(Err(_))) => lock(LockState::Unknown, LockSource::None),
+        (Some(Ok(false)), _) => lock(LockState::Unlocked, LockSource::Logind),
+        (None, Some(Ok(false))) => lock(LockState::Unlocked, LockSource::Noctalia),
+        (None, None) => Lock {
+            logind_error: Some("the desk's host.json records no lock source".to_owned()),
+            ..lock(LockState::Unknown, LockSource::None)
+        },
+    }
 }
 
 /// What logind says about niri's session.
@@ -179,6 +287,7 @@ fn decide(logind: Result<bool, String>, noctalia: Option<&Map<String, Value>>) -
         source,
         session: None,
         logind_error,
+        noctalia_error: None,
     };
     match (logind, noctalia) {
         (Ok(true), _) => lock(LockState::Locked, LockSource::Logind, None),
@@ -273,23 +382,29 @@ mod tests {
     }
 
     /// Catches a desk whose server reads its own session's lock state, which no lock screen
-    /// ever locks, so an agent would act on the desk while the owner's screen is locked; and
-    /// one that acts when the host's state can't be read.
+    /// ever locks, so an agent would act on the desk while the owner's screen is locked; one
+    /// that drops the host's recorded Noctalia because the joining server's own search
+    /// doesn't find Noctalia; and one that acts when a recorded source can't be read.
     #[tokio::test]
-    async fn a_desks_lock_state_is_the_hosts_and_unknown_refuses() {
+    async fn a_desks_lock_state_is_the_recorded_hosts_and_unknown_refuses() {
         let dir = crate::test_support::short_dir("lock");
-        // Neither niri answers, so logind's hint is out of reach and Noctalia decides.
-        let host_niri = dir.join("host-niri.sock");
         let host_noctalia = dir.join("noctalia-wayland-0.sock");
-        let env = crate::test_support::desk_env(&dir, host_niri, Some(host_noctalia.clone()));
+        let recorded = record::LockSources {
+            logind_session: None,
+            noctalia: Some(host_noctalia.clone()),
+        };
+        let env = crate::test_support::desk_env(&dir, dir.join("host-niri.sock"), recorded);
+        // The joining server finds no Noctalia of its own.
+        assert_eq!(env.desktop.noctalia, None);
         // The desk's own display names a Noctalia that says unlocked; it must not count.
         noctalia_at(&noctalia::socket(&env).unwrap(), false);
         let sources = LockSources {
             env: &env,
-            noctalia: true,
+            noctalia: false,
         };
         let unread = sources.read().await;
         assert_eq!(unread.state(), LockState::Unknown, "{unread:?}");
+        assert!(unread.noctalia_error.is_some(), "{unread:?}");
         assert!(crate::policy::refuse_lock(unread.state()).is_some());
 
         noctalia_at(&host_noctalia, true);
@@ -302,6 +417,41 @@ mod tests {
             crate::policy::refuse_lock(locked.state()).unwrap().name,
             crate::error::ErrorName::ScreenLocked
         );
+
+        // A recorded logind session this server can't ask about, with Noctalia unlocked.
+        let unlocked = dir.join("noctalia-wayland-1.sock");
+        noctalia_at(&unlocked, false);
+        let half_recorded = record::LockSources {
+            logind_session: Some("4".to_owned()),
+            noctalia: Some(unlocked),
+        };
+        let half_env =
+            crate::test_support::desk_env(&dir, dir.join("host-niri.sock"), half_recorded);
+        let half = LockSources {
+            env: &half_env,
+            noctalia: false,
+        }
+        .read()
+        .await;
+        assert_eq!(half.state(), LockState::Unknown, "{half:?}");
+        assert!(half.logind_error.is_some(), "{half:?}");
         std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn a_desk_is_unlocked_only_when_every_recorded_source_says_so() {
+        let state = |logind: Option<Result<bool, String>>,
+                     noctalia: Option<Result<bool, String>>| {
+            decide_desk(logind.as_ref(), noctalia.as_ref()).state
+        };
+        let failed = || Some(Err("unreadable".to_owned()));
+        assert_eq!(state(Some(Ok(true)), failed()), LockState::Locked);
+        assert_eq!(state(failed(), Some(Ok(true))), LockState::Locked);
+        assert_eq!(state(Some(Ok(false)), failed()), LockState::Unknown);
+        assert_eq!(state(failed(), None), LockState::Unknown);
+        assert_eq!(state(None, None), LockState::Unknown);
+        assert_eq!(state(Some(Ok(false)), Some(Ok(false))), LockState::Unlocked);
+        assert_eq!(state(None, Some(Ok(false))), LockState::Unlocked);
+        assert_eq!(state(Some(Ok(false)), None), LockState::Unlocked);
     }
 }

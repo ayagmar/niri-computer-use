@@ -744,18 +744,14 @@ impl Engine {
                 None
             }
         };
-        let (state, outputs, shell, logind, host_noctalia) = tokio::join!(
+        let (state, outputs, shell, reading) = tokio::join!(
             niri::desktop(self.events.as_ref()),
             niri::outputs(&self.env.niri_socket),
             shell,
-            control::logind(&self.env.host_niri, &self.env.desktop),
-            control::host_noctalia(&self.env)
+            control::Reading::of(&self.env)
         );
-        let noctalia = host_noctalia
-            .as_ref()
-            .or(shell.as_ref())
-            .and_then(|status| status.as_ref().ok());
-        let lock = control::lock(logind, noctalia);
+        let noctalia = shell.as_ref().and_then(|status| status.as_ref().ok());
+        let lock = reading.lock(noctalia);
         let mut state = state?;
         let titles_hidden = policy::refuse_observe(lock.state()).map(|refused| refused.detail);
         if titles_hidden.is_some() {

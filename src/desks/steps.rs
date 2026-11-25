@@ -17,7 +17,7 @@ use super::programs::Programs;
 use super::record::{self, Endpoints, Host, Size};
 use super::{config, output};
 use crate::niri::round_trips::{self, Burst};
-use crate::runner::desk::{DeskChild, Output, desk_child};
+use crate::runner::desk::{Death, DeskChild, How, Output, desk_child};
 use crate::runner::{self, Search};
 
 /// How long one step may take.
@@ -117,14 +117,12 @@ impl Plan {
             "hold".into(),
         ];
         let env = environment::cage(&self.vars, &self.layout);
-        let child = desk_child(
-            cage.as_os_str(),
-            &args,
-            &env,
-            Output::Log,
-            self.log("cage")?,
-        )
-        .map_err(|error| error.detail)?;
+        let how = How {
+            output: Output::Log,
+            death: Death::Term,
+        };
+        let child = desk_child(cage.as_os_str(), &args, &env, how, self.log("cage")?)
+            .map_err(|error| error.detail)?;
         let display = self.layout.cage_display();
         let deadline = Instant::now() + STEP;
         let running = processes.cage.insert(child);
@@ -167,7 +165,7 @@ impl Plan {
             self.programs.dbus_daemon.as_os_str(),
             &args,
             &env,
-            Output::Piped,
+            How::PIPED,
             self.log("dbus")?,
         )
         .map_err(|error| error.detail)?;
@@ -205,7 +203,7 @@ impl Plan {
             self.programs.niri.as_os_str(),
             &args,
             &env,
-            Output::Log,
+            How::LOG,
             self.log("niri")?,
         )
         .map_err(|error| error.detail)?;
@@ -246,7 +244,7 @@ impl Plan {
             self.programs.launcher.as_os_str(),
             &["--launch-immediately".into()],
             &env,
-            Output::Log,
+            How::LOG,
             self.log("at-spi-bus")?,
         )
         .map_err(|error| error.detail)?;
@@ -257,7 +255,7 @@ impl Plan {
             self.programs.registry.as_os_str(),
             &[],
             &environment::apps(&self.vars, &self.layout, bus),
-            Output::Log,
+            How::LOG,
             self.log("at-spi-registry")?,
         )
         .map_err(|error| error.detail)?;

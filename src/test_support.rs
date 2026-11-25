@@ -89,12 +89,12 @@ pub(crate) fn niri_env(dir: &std::path::Path) -> crate::Env {
 
 /// The environment of a desk's server whose desk `web` has its niri socket `niri.test.sock`
 /// in `dir/ncu-d/web`, set up as `niri_env` does, for a host session whose runtime
-/// directory is `dir`: the host's niri at `host_niri`, its Noctalia at `host_noctalia`, the
+/// directory is `dir`: the host's niri at `host_niri`, its lock read from `lock`, the
 /// host-wide stop flag at `dir/ncu-d/stop.flag`.
 pub(crate) fn desk_env(
     dir: &std::path::Path,
     host_niri: PathBuf,
-    host_noctalia: Option<PathBuf>,
+    lock: crate::desks::record::LockSources,
 ) -> crate::Env {
     use crate::desks::{join, layout, name, record};
     let desks = layout::Desks::of(dir);
@@ -115,8 +115,8 @@ pub(crate) fn desk_env(
             niri_socket: Some(host_niri.clone()),
             wayland_display: Some("wayland-0".to_owned()),
             session_bus: None,
+            lock,
         },
-        host_noctalia,
         stop_flag: desks.stop_flag(),
     };
     crate::Env {

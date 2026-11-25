@@ -1638,7 +1638,11 @@ mod tests {
     async fn the_host_wide_stop_refuses_a_desk_at_admission_and_before_each_send() {
         let me = session(1);
         let dir = crate::test_support::short_dir("desk-host-stop");
-        let env = crate::test_support::desk_env(&dir, dir.join("host-niri.sock"), None);
+        let env = crate::test_support::desk_env(
+            &dir,
+            dir.join("host-niri.sock"),
+            crate::desks::record::LockSources::default(),
+        );
         let desk = Desk::start(&env);
         desk.acquire(&me, "me/1", ready(None), ready(None))
             .await

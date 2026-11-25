@@ -15,5 +15,7 @@ pub(crate) mod name;
 mod output;
 mod programs;
 pub(crate) mod record;
+pub(crate) mod scope;
+mod serial;
 mod steps;
 mod supervisor;

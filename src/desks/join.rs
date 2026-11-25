@@ -28,8 +28,6 @@ pub(crate) struct Joined {
     pub(crate) endpoints: Endpoints,
     pub(crate) root: PathBuf,
     pub(crate) host: Host,
-    /// The host's Noctalia socket, when the host has Noctalia, for the lock state.
-    pub(crate) host_noctalia: Option<PathBuf>,
     /// The host-wide stop flag.
     pub(crate) stop_flag: PathBuf,
 }
@@ -69,12 +67,12 @@ impl Joined {
 
 /// Joins the desk `name` of the host session whose runtime directory is `host_runtime`:
 /// only when it is ready, its supervisor still the process it recorded as `alive` says,
-/// and its sockets there. `host_noctalia` says whether the host has Noctalia. Reads the
-/// desk's files and nothing else.
+/// and its sockets there. Reads the desk's files and nothing else: the host's lock
+/// sources are those `host.json` recorded at `desk start`, whatever the joining server's
+/// own environment would find.
 pub(crate) fn join(
     host_runtime: &Path,
     name: &DeskName,
-    host_noctalia: bool,
     alive: impl Fn(Supervisor) -> bool,
 ) -> Result<Joined, String> {
     let desks = Desks::of(host_runtime);
@@ -83,17 +81,11 @@ pub(crate) fn join(
     let host: Host = record::read(&layout.host()).map_err(|error| {
         format!("desk {name} has no readable record of its host session: {error}")
     })?;
-    let host_noctalia = host_noctalia
-        .then_some(host.wayland_display.as_deref())
-        .flatten()
-        .filter(|display| !display.contains('/'))
-        .map(|display| host.runtime_dir.join(format!("noctalia-{display}.sock")));
     Ok(Joined {
         name: name.clone(),
         endpoints,
         root: layout.root().to_path_buf(),
         host,
-        host_noctalia,
         stop_flag: desks.stop_flag(),
     })
 }
@@ -120,6 +112,11 @@ fn ready(
             ));
         }
         Phase::Stopping => return Err(format!("desk {name} is stopping")),
+        Phase::Stopped { reason } => {
+            return Err(format!(
+                "desk {name} stopped ({reason}); clean up with `niri-computer-use desk stop {name}`, then {start}"
+            ));
+        }
         Phase::Failed { step, reason } => {
             return Err(format!(
                 "desk {name} failed to start at {}: {reason}; {start}",
@@ -145,7 +142,7 @@ fn ready(
     Ok(endpoints)
 }
 
-fn step_name(step: record::Step) -> String {
+pub(crate) fn step_name(step: record::Step) -> String {
     serde_json::to_value(step)
         .ok()
         .and_then(|value| value.as_str().map(str::to_owned))
@@ -169,6 +166,8 @@ mod tests {
                 pid: 4242,
                 start_time: 7,
             },
+            generation: crate::desks::scope::Generation::parse("1").unwrap(),
+            cgroup: "/app.slice/ncu-desk-web-1.scope".to_owned(),
             started: "2026-11-25T00:00:00.000Z".to_owned(),
             phase,
         }
@@ -223,13 +222,13 @@ mod tests {
         let host = crate::test_support::short_dir("join");
         let name = DeskName::parse("web").unwrap();
         let alive = |_| true;
-        let missing = join(&host, &name, false, alive).unwrap_err();
+        let missing = join(&host, &name, alive).unwrap_err();
         assert!(missing.contains("there is no desk web"), "{missing}");
         assert!(!host.join("ncu-d").exists());
 
         let layout = Desks::of(&host).desk(&name).unwrap();
         std::fs::create_dir_all(layout.root()).unwrap();
-        let unrecorded = join(&host, &name, false, alive).unwrap_err();
+        let unrecorded = join(&host, &name, alive).unwrap_err();
         assert!(unrecorded.contains("no readable record"), "{unrecorded}");
 
         let host_record = Host {
@@ -237,6 +236,10 @@ mod tests {
             niri_socket: Some(host.join("niri.wayland-9.1.sock")),
             wayland_display: Some("wayland-9".to_owned()),
             session_bus: Some("unix:path=/host/bus".to_owned()),
+            lock: record::LockSources {
+                logind_session: Some("4".to_owned()),
+                noctalia: Some(host.join("noctalia-wayland-9.sock")),
+            },
         };
         record::write(&layout.host(), &host_record).unwrap();
         for (phase, said) in [
@@ -246,6 +249,12 @@ mod tests {
             ),
             (Phase::Stopping, "is stopping"),
             (
+                Phase::Stopped {
+                    reason: "niri exited".to_owned(),
+                },
+                "stopped (niri exited)",
+            ),
+            (
                 Phase::Failed {
                     step: Step::RoundTrips,
                     reason: "p95 31 ms".to_owned(),
@@ -254,29 +263,25 @@ mod tests {
             ),
         ] {
             record::write(&layout.record(), &record(phase)).unwrap();
-            let refused = join(&host, &name, false, alive).unwrap_err();
+            let refused = join(&host, &name, alive).unwrap_err();
             assert!(refused.contains(said), "{refused}");
         }
 
         record::write(&layout.record(), &record(ready_phase(layout.root()))).unwrap();
-        let gone = join(&host, &name, false, |_| false).unwrap_err();
+        let gone = join(&host, &name, |_| false).unwrap_err();
         assert!(
             gone.contains("supervisor (PID 4242) isn't running"),
             "{gone}"
         );
-        let socketless = join(&host, &name, false, alive).unwrap_err();
+        let socketless = join(&host, &name, alive).unwrap_err();
         assert!(socketless.contains("isn't a socket"), "{socketless}");
 
         let _niri = UnixListener::bind(layout.root().join("niri.wayland-1.99.sock")).unwrap();
         let _display = UnixListener::bind(layout.root().join("wayland-1")).unwrap();
         let before = listing(&host);
-        let joined = join(&host, &name, true, alive).unwrap();
+        let joined = join(&host, &name, alive).unwrap();
         assert_eq!(listing(&host), before);
         assert_eq!(joined.host, host_record);
-        assert_eq!(
-            joined.host_noctalia,
-            Some(host.join("noctalia-wayland-9.sock"))
-        );
         assert_eq!(joined.stop_flag, host.join("ncu-d/stop.flag"));
         std::fs::remove_dir_all(host).unwrap();
     }
@@ -298,8 +303,8 @@ mod tests {
                 niri_socket: Some("/run/user/1000/niri.wayland-1.5.sock".into()),
                 wayland_display: Some("wayland-1".to_owned()),
                 session_bus: Some("unix:path=/run/user/1000/bus".to_owned()),
+                lock: record::LockSources::default(),
             },
-            host_noctalia: None,
             stop_flag: "/run/user/1000/ncu-d/stop.flag".into(),
         };
         let vars: std::collections::BTreeMap<_, _> = joined.children().into_iter().collect();

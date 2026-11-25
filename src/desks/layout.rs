@@ -47,11 +47,8 @@ impl Desks {
 
     /// Sets the host-wide stop flag, creating the root as needed.
     pub(crate) fn stop(&self) -> std::io::Result<()> {
-        use std::os::unix::fs::{DirBuilderExt as _, OpenOptionsExt as _};
-        std::fs::DirBuilder::new()
-            .recursive(true)
-            .mode(0o700)
-            .create(&self.root)?;
+        use std::os::unix::fs::OpenOptionsExt as _;
+        self.create()?;
         std::fs::OpenOptions::new()
             .write(true)
             .create(true)
@@ -70,6 +67,21 @@ impl Desks {
             }
             _ => Ok(()),
         }
+    }
+
+    /// The lock that serializes the lifecycle of the desk `name`: beside the desks, so
+    /// removing a desk's directory never removes it. The dot keeps it from being a desk.
+    pub(crate) fn lock(&self, name: &DeskName) -> PathBuf {
+        self.root.join(format!(".{name}.lock"))
+    }
+
+    /// Makes the root, readable by the user alone, as needed.
+    pub(crate) fn create(&self) -> std::io::Result<()> {
+        use std::os::unix::fs::DirBuilderExt as _;
+        std::fs::DirBuilder::new()
+            .recursive(true)
+            .mode(0o700)
+            .create(&self.root)
     }
 
     /// The directory of the desk called `name`, refused when its longest socket wouldn't

@@ -10,6 +10,7 @@ use serde::{Deserialize, Serialize};
 
 use super::check::RoundTrips;
 use super::name::DeskName;
+use super::scope::Generation;
 
 /// The biggest record read back; both are a few hundred bytes.
 const MAX_RECORD: u64 = 64 * 1024;
@@ -104,8 +105,10 @@ pub(crate) struct Endpoints {
 }
 
 /// A desk's lifecycle. A desk is `Starting` until every step passed, then `Ready` until
-/// `desk stop` or a failure makes it `Stopping`; a start that fails is `Failed`, and the
-/// supervisor stops what it started. Only the supervisor writes it.
+/// `desk stop` or a failure makes it `Stopping`, then `Stopped` once the supervisor has
+/// stopped every process; a start that fails is `Failed`, once the supervisor has stopped
+/// what it started. Only the supervisor writes it. The directory goes only when `desk
+/// stop` or the next `desk start` has stopped the desk's scope and found it empty.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "phase", rename_all = "snake_case")]
 pub(crate) enum Phase {
@@ -117,6 +120,10 @@ pub(crate) enum Phase {
         round_trips: RoundTrips,
     },
     Stopping,
+    /// Why the desk stopped, and what its supervisor found left, if anything.
+    Stopped {
+        reason: String,
+    },
     Failed {
         step: Step,
         reason: String,
@@ -131,6 +138,10 @@ pub(crate) struct Record {
     /// The headless output's size; a windowed desk's is its host window's.
     pub(crate) size: Option<Size>,
     pub(crate) supervisor: Supervisor,
+    /// The start this record belongs to, which names its scope.
+    pub(crate) generation: Generation,
+    /// The scope's cgroup, as the supervisor found itself in it.
+    pub(crate) cgroup: String,
     pub(crate) started: String,
     #[serde(flatten)]
     pub(crate) phase: Phase,
@@ -138,14 +149,27 @@ pub(crate) struct Record {
 
 /// `host.json`: what a desk's server needs from the host session, written at
 /// `desk start` from the host's resolved environment. The host's lock state is read from
-/// its niri and its Noctalia, notifications go to its session bus, and `systemd-run`
-/// finds the user's manager through its runtime directory.
+/// the sources recorded in `lock`, notifications go to its session bus, `systemd-run`
+/// finds the user's manager through its runtime directory, and the stop key is read
+/// from its niri's config.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct Host {
     pub(crate) runtime_dir: PathBuf,
     pub(crate) niri_socket: Option<PathBuf>,
     pub(crate) wayland_display: Option<String>,
     pub(crate) session_bus: Option<String>,
+    pub(crate) lock: LockSources,
+}
+
+/// Where the host's lock state is read, as `desk start` found it: logind's locked hint
+/// for the session the host's niri runs in, and the host's Noctalia. A desk's server reads
+/// exactly these, whatever its own environment finds.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct LockSources {
+    /// The logind session whose hint the host's niri sets.
+    pub(crate) logind_session: Option<String>,
+    /// The host's Noctalia's socket, when the host has Noctalia.
+    pub(crate) noctalia: Option<PathBuf>,
 }
 
 /// Replaces the file at `path` with `value`, readable by the user alone.
@@ -216,6 +240,8 @@ mod tests {
                 pid: 42,
                 start_time: 7,
             },
+            generation: Generation::parse("9").unwrap(),
+            cgroup: "/app.slice/ncu-desk-web-9.scope".to_owned(),
             started: "2026-11-25T00:00:00Z".to_owned(),
             phase: Phase::Failed {
                 step: Step::RoundTrips,
