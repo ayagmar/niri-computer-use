@@ -44,6 +44,9 @@ use crate::noctalia::Named;
 const ROTATE_AT: u64 = 10 * 1024 * 1024;
 /// How many logs moved aside are kept: `audit.jsonl.1`, the newest, to `audit.jsonl.3`.
 const KEPT: u32 = 3;
+/// How long a server on its way out waits to say its log is behind.
+const WARN_LIMIT: Duration = Duration::from_millis(100);
+
 /// How long a call waits for its line to be written before it goes on without.
 pub(crate) const WRITE_LIMIT: Duration = Duration::from_secs(1);
 /// How many lines may wait for the writer; a call that finds this many goes unlogged.
@@ -316,10 +319,11 @@ impl Audit {
         .await
         .unwrap_or(false);
         if !flushed {
-            crate::cli::print_error(&format!(
+            let warning = format!(
                 "the audit log {} was still being written when the server ended; its last lines may be missing",
                 path.display()
-            ));
+            );
+            let _written = crate::cli::print_error_within(warning, WARN_LIMIT).await;
         }
         flushed
     }
