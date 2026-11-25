@@ -1080,6 +1080,33 @@ mod script {
         assert!(stdout.contains(&named), "{stdout}");
     }
 
+    /// Where a directory on the way is a link, as `/home` to `/var/home` on Fedora Atomic,
+    /// `/proc` names the running binary by its physical path.
+    #[tokio::test]
+    async fn a_server_left_on_the_replaced_build_is_named_through_a_linked_directory() {
+        let release = Release::new("linked-dir", "x86_64");
+        release.publish(LATEST, "x86_64", None);
+        let real = release.dir.join("real-bin");
+        std::fs::create_dir_all(&real).unwrap();
+        let linked = release.dir.join("linked-bin");
+        std::os::unix::fs::symlink(&real, &linked).unwrap();
+        std::fs::copy("/bin/cat", real.join("niri-computer-use")).unwrap();
+        let mut server = waiting_server(&release, &real.join("niri-computer-use"));
+
+        let output = release
+            .install(&[("NCU_BIN_DIR", linked.to_str().unwrap())])
+            .await;
+
+        server.kill().unwrap();
+        server.wait().unwrap();
+        assert!(output.status.success(), "{output:?}");
+        let stdout = String::from_utf8(output.stdout).unwrap();
+        assert!(
+            stdout.contains(&format!("PID {}, started by", server.id())),
+            "{stdout}"
+        );
+    }
+
     #[tokio::test]
     async fn a_linked_binary_is_replaced_by_a_file_and_its_target_kept() {
         let release = Release::new("linked", "x86_64");

@@ -84,9 +84,11 @@ installed_version=$("${tmp}/${name}/niri-computer-use" --version) || status=$?
 # replaces anything, so a failed copy leaves the previous install as it was. Each then
 # goes into place with a rename, so a running server keeps the binary it started with.
 # A release before the plugin has none, and leaves an installed one as it is. The staged
-# names carry this run's PID, so two runs at once can't remove each other's files.
+# names carry this run's PID, so two runs at once can't remove each other's files. The
+# physical path is what /proc names a running binary by, so the check for old servers
+# below matches where a directory on the way is a link, as /home is on some systems.
 mkdir -p "${bin_dir}" "${data_dir}/skills" "${data_dir}/noctalia"
-bin_dir=$(cd "${bin_dir}" && pwd)
+bin_dir=$(cd "${bin_dir}" && pwd -P)
 binary=${bin_dir}/niri-computer-use
 skill=${data_dir}/skills/niri-computer-use
 plugin=${data_dir}/noctalia/niri-computer-use
