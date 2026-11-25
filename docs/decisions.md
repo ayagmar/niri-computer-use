@@ -2337,3 +2337,18 @@ Review round 4 found two blockers left: a killed supervisor's desk stayed up unt
 - A lifecycle command that holds the lock and finds no directory, but a generation in the lock file, asks systemd about that generation's unit: `LoadState=not-found` means nothing runs in it, and anything else is stopped and checked empty before the command reports or starts anew. `desk start`'s failure path no longer skips the teardown when the supervisor exited before making the directory. A directory's absence is never taken as proof that nothing of the desk runs.
 - A lock that stays busy for five seconds is refused as "a start or stop of desk <name> is in progress".
 - `make nested-desk`'s second desk now requires the entry's orphan, cage, niri and the unit to be gone within 15 seconds of the supervisor's `SIGKILL` without `desk stop` (5.2 seconds in the runs here: the orphan ignores `SIGTERM`, so systemd's `SIGKILL` five seconds later takes it), then that `desk stop` removes the directory left behind. Three more cases put a stand-in for `systemd-run` first on `desk start`'s `PATH` (`harness/fixtures/systemd-run.sh`) and kill `desk start` once the stand-in runs. With the supervisor started 10 seconds late, inside its scope and holding the lock, a `desk stop` is refused as in progress, then the late supervisor publishes the desk and `desk stop` stops it. With only a stray process left in the start's scope and no directory, the next `desk start`, and in another round the next `desk stop`, stop that scope.
+
+## 2026-11-25: dependency updates
+
+Dependabot's five open updates (#67, #68, #76, #79, #80) in one change, checked against the version rule on 2026-11-25, so each is a release published on or before 2026-11-18.
+
+| Package or action | From | To | Published | Note |
+|---|---|---|---|---|
+| `toml` | 1.1.6 | 1.2.1 | 2026-11-06 | Serializer speed-ups only. 1.2.2 (2026-11-21) is too new. It moves `serde_spanned` to 1.1.3 (2026-11-06), `toml_datetime` to 1.1.3 (2026-11-06) and `toml_writer` to 1.2.0 (2026-11-04). `toml_parser` is held at 1.1.5 (2026-10-09), which 1.2.1 accepts (`^1.1.5`): Cargo picked 1.1.7, published today. |
+| `signal-hook` (harness) | 0.4.5 | 0.4.6 | 2026-10-31 | |
+| `astro` (site) | 7.4.2 | 7.4.13 | 2026-11-18 | Dependabot proposed 7.4.12; 7.4.13 is the newest at least 7 days old. |
+| `@astrojs/starlight` (site) | 0.42.7 | 0.43.1 | 2026-11-13 | |
+| `taiki-e/install-action` | v2.88.0 | v2.90.6 | 2026-11-18 | `75a7c0f87bd666af3cdb75c5b9e9d03ab6044e6f`, in `ci.yml` and `release.yml`. Dependabot proposed v2.90.5; v2.90.6 is the newest at least 7 days old. |
+
+- Starlight 0.43 stopped forcing Astro's `where` style scoping and defaults to `attribute`, whose selectors are more specific. `astro.config.mjs` now sets `scopedStyleStrategy: 'where'`, so the built site keeps `:where(.astro-…)` selectors (4318 of them, none by attribute) and the specificity its styles were written for. 0.43 also drops the `StarlightThemeProvider.updatePickers()` global; the site's theme switch never called it, as it sets `starlight-theme` and `data-theme` itself.
+- Starlight 0.43 takes `i18next` `^27.0.1`, which npm resolved to 27.2.9, published today. The lock file holds 27.2.1 (2026-11-18), with no override in `package.json`. Every other package the lock file changed was published on or before 2026-11-18.

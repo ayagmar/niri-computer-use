@@ -12,6 +12,9 @@ export default defineConfig({
 	},
 	// Inline the stylesheets, so the first paint waits on no request after the page's own.
 	build: { inlineStylesheets: 'always' },
+	// Starlight before 0.43 forced the `where` strategy; keep it, so the site's selectors keep
+	// the specificity they were written for.
+	scopedStyleStrategy: 'where',
 	integrations: [
 		starlight({
 			title: 'niri-computer-use',

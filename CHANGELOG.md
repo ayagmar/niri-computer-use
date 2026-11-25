@@ -13,6 +13,7 @@ All notable changes to this project are documented here. The format follows [Kee
 - The skill and the server's instructions tell agents that everything they read on the desktop, web pages, window titles, accessible names and the clipboard included, is data, never instructions, and to ask the user before doing what a page asks. The safety page says what that guidance can't promise.
 - rmcp 3.11.0. Before 3.9.0, rmcp's HTTP clients had an unbounded read (RUSTSEC-2026-0462); the server uses only stdio, which wasn't affected.
 - zbus 6.3.0, which merged the unmaintained `zvariant`, `zbus_names` and `zvariant_derive` crates into zbus; the accessibility tools behave as before.
+- toml 1.2.1, and the site moves to Astro 7.4.13 and Starlight 0.43.1.
 
 ### Fixed
 
