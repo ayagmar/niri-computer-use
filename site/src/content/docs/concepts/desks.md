@@ -112,7 +112,7 @@ While your screen is locked, or its lock state is unknown, a desk's server refus
 
 ## The responsiveness check
 
-niri drawing into another compositor waits for that compositor's frames unless the GPU driver's swap interval is off, so a desk's niri always gets `__GL_SYNC_TO_VBLANK=0` (NVIDIA) and `vblank_mode=0` (Mesa). Before a desk is ready, the supervisor measures 40 round trips to its niri. If the 95th percentile is over 20 ms, the desk is stopped and `desk start` fails with the numbers; there is no fallback. Here a ready headless desk answered in 0.6 ms at the 95th percentile.
+niri drawing into another compositor waits for that compositor's frames unless the GPU driver's swap interval is off, so a desk's niri always gets `__GL_SYNC_TO_VBLANK=0` (NVIDIA) and `vblank_mode=0` (Mesa). Before a desk is ready, the supervisor measures 40 round trips to its niri. If the 95th percentile is over 5 ms, the desk is stopped and `desk start` fails with the numbers; there is no fallback. Here a ready headless desk answered in 0.6 ms at the 95th percentile.
 
 ## Windowed desks
 

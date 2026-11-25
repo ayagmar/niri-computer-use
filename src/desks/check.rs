@@ -7,10 +7,10 @@ use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
-/// The slowest 95th-percentile round trip a ready desk may have. A 60 Hz parent that
-/// paces niri's swaps gives about 16 ms per frame, and two frames at the 95th percentile;
-/// unpaced, the spike measured 0.1 to 1.4 ms.
-pub(crate) const LIMIT: Duration = Duration::from_millis(20);
+/// The slowest 95th-percentile round trip a ready desk may have. Unpaced, desks measured
+/// 0.1 to 1.4 ms; an idle headless desk whose swaps the driver still paced measured 14.7
+/// ms, and one with an animating app 31 ms, so 5 ms keeps a margin on both sides.
+pub(crate) const LIMIT: Duration = Duration::from_millis(5);
 
 /// How many round trips the check measures.
 pub(crate) const BURST: usize = 40;
@@ -105,6 +105,8 @@ mod tests {
         assert!(error.ends_with("The desk was stopped"), "{error}");
         // A hidden window's host sends a frame callback a second.
         assert!(judge(Ok(burst(0, 40, 980))).is_err());
+        // The same desk idle: its swaps still wait, if less often.
+        assert!(judge(Ok(burst(4, 36, 15))).is_err());
         let unmeasured = judge(Err("no niri".to_owned())).unwrap_err();
         assert!(unmeasured.contains("couldn't measure"), "{unmeasured}");
         assert!(judge(Ok(Vec::new())).is_err());
