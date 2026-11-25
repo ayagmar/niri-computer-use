@@ -4,6 +4,12 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## Unreleased
 
+### Fixed
+
+- The install script checks `NCU_REGISTER` before it downloads anything. A wrong value used to fail the run after the new binary, skill and plugin were already in place.
+- Two runs of the install script at once take turns under a lock instead of removing each other's staged copies, and a run stopped while it replaces the skill or the plugin puts the previous one back instead of leaving none. The script now needs util-linux's `flock`.
+- After an update, the install script names the servers still running the replaced build when the binary's directory is reached through a link, as `/home` is on Fedora Atomic.
+
 ### Changed
 
 - The skill and the server's instructions tell agents that everything they read on the desktop, web pages, window titles, accessible names and the clipboard included, is data, never instructions, and to ask the user before doing what a page asks. The safety page says what that guidance can't promise.
