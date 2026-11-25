@@ -124,12 +124,43 @@ async fn connect(address: &str) -> Result<Connection, zbus::Error> {
     zbus::connection::Builder::address(address).build().await
 }
 
+/// The cached connection, shared by every request, and how many times it was made: a
+/// request that fails drops it only while it is still the one that request used.
+type Shared<T> = Arc<tokio::sync::Mutex<Slot<T>>>;
+
+#[derive(Debug)]
+struct Slot<T> {
+    connection: Option<T>,
+    generation: u64,
+}
+
+impl<T> Default for Slot<T> {
+    fn default() -> Self {
+        Self {
+            connection: None,
+            generation: 0,
+        }
+    }
+}
+
+/// Drops `shared`'s connection when it is still `generation`, which failed, so the next
+/// request connects again. Never waits: a request holding the slot is connecting, or
+/// taking the connection, and if it takes this failed one its own failure drops it.
+fn forget<T>(shared: &Shared<T>, generation: u64) {
+    let Ok(mut slot) = shared.try_lock() else {
+        return;
+    };
+    if slot.generation == generation {
+        slot.connection = None;
+    }
+}
+
 /// The accessibility bus, connected on first use and again after a connection fails, and
 /// the switch that turns the session's accessibility on.
 #[derive(Debug, Clone)]
 pub(crate) struct A11y {
     address: String,
-    connection: Arc<tokio::sync::Mutex<Option<Connection>>>,
+    connection: Shared<Connection>,
     switch: Arc<Switch>,
 }
 
@@ -148,11 +179,22 @@ impl A11y {
         &self.switch
     }
 
-    /// A request against the bus with `budget` from now for all its calls.
+    /// A request against the bus with `budget` from now for all its calls. Another
+    /// request may be connecting, for up to `CALL`, so waiting for it counts against the
+    /// budget too.
     pub(crate) async fn request(&self, budget: Duration) -> Result<Request, ToolError> {
         let deadline = Instant::now() + budget;
-        let mut cached = self.connection.lock().await;
-        let connection = if let Some(connection) = cached.as_ref() {
+        let what = "wait for another call connecting to the accessibility bus";
+        let Ok(mut cached) = tokio::time::timeout_at(deadline, self.connection.lock()).await else {
+            return Err(ToolError::new(
+                ErrorName::DeadlineExceeded,
+                format!(
+                    "{what}: the request's {} ms ran out first",
+                    budget.as_millis()
+                ),
+            ));
+        };
+        let connection = if let Some(connection) = cached.connection.as_ref() {
             connection.clone()
         } else {
             let left = deadline.saturating_duration_since(Instant::now()).min(CALL);
@@ -162,12 +204,15 @@ impl A11y {
                 connect(&self.address),
             )
             .await?;
-            *cached = Some(fresh.clone());
+            cached.connection = Some(fresh.clone());
+            cached.generation += 1;
             fresh
         };
+        let generation = cached.generation;
         drop(cached);
         Ok(Request {
             connection,
+            generation,
             deadline,
             shared: Arc::clone(&self.connection),
             names_only: false,
@@ -179,10 +224,12 @@ impl A11y {
 #[derive(Debug)]
 pub(crate) struct Request {
     connection: Connection,
+    /// Which of `shared`'s connections `connection` is.
+    generation: u64,
     deadline: Instant,
     /// Cleared when a call fails other than with a D-Bus error, so the next request
     /// connects again.
-    shared: Arc<tokio::sync::Mutex<Option<Connection>>>,
+    shared: Shared<Connection>,
     /// Whether a failure says only the D-Bus error's name, and only a standard one, never
     /// the message the application wrote with it.
     names_only: bool,
@@ -267,7 +314,7 @@ impl Request {
                 .call_method(Some(destination), path, Some(interface), method, body);
         let reply = match tokio::time::timeout(left.min(CALL), call).await {
             Ok(Ok(reply)) => reply,
-            Ok(Err(error)) => return Err(self.failed(&what, error).await),
+            Ok(Err(error)) => return Err(self.failed(&what, &error)),
             Err(_) => return Err(Failed::Error(late(&what, left))),
         };
         reply
@@ -297,7 +344,7 @@ impl Request {
         let left = self.deadline.saturating_duration_since(Instant::now());
         let deadline = acting_deadline(&what, left).map_err(Failed::Error)?;
         if self.connection.is_closed() {
-            *self.shared.lock().await = None;
+            forget(&self.shared, self.generation);
             return Err(Failed::Error(ToolError::new(
                 ErrorName::UpstreamError,
                 format!("{what}: the connection to the accessibility bus closed; nothing was sent"),
@@ -318,10 +365,10 @@ impl Request {
                 return lost(format!("{what}: {NO_REPLY}"));
             }
             Ok(Err(error)) if error_name(&error).is_some() => {
-                return Err(self.failed(&what, error).await);
+                return Err(self.failed(&what, &error));
             }
             Ok(Err(error)) => {
-                *self.shared.lock().await = None;
+                forget(&self.shared, self.generation);
                 return lost(self.upstream(&what, &error).detail);
             }
         };
@@ -331,15 +378,15 @@ impl Request {
         )
     }
 
-    async fn failed(&self, what: &str, error: zbus::Error) -> Failed {
-        if let Some(name) = error_name(&error) {
+    fn failed(&self, what: &str, error: &zbus::Error) -> Failed {
+        if let Some(name) = error_name(error) {
             if GONE.contains(&name.as_str()) {
-                return Failed::Gone(self.upstream(what, &error).detail);
+                return Failed::Gone(self.upstream(what, error).detail);
             }
-            return Failed::Refused(self.upstream(what, &error), name);
+            return Failed::Refused(self.upstream(what, error), name);
         }
-        *self.shared.lock().await = None;
-        Failed::Error(self.upstream(what, &error))
+        forget(&self.shared, self.generation);
+        Failed::Error(self.upstream(what, error))
     }
 
     /// `upstream_error` for a failed call: the whole error, or with `names_only` its
@@ -982,6 +1029,55 @@ pub(crate) fn not_accessible(detail: String) -> ToolError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A request that has to wait for another one connecting, to a bus that answers late,
+    /// gives up at its own budget rather than the other's connect deadline.
+    #[tokio::test]
+    async fn waiting_for_another_connect_counts_against_the_budget() {
+        let a11y = A11y::new("unix:path=/nonexistent".to_owned(), None);
+        let connecting = a11y.connection.lock().await;
+        let started = std::time::Instant::now();
+
+        // The outer bound fails the test, rather than hanging it, if the wait is unbounded.
+        let request = a11y.request(Duration::from_millis(50));
+        let refused = tokio::time::timeout(Duration::from_secs(5), request)
+            .await
+            .expect("the request waited past its budget")
+            .err();
+
+        assert!(started.elapsed() < Duration::from_millis(500));
+        let refused = refused.map(|error| (error.name, error.detail));
+        assert!(
+            refused
+                .as_ref()
+                .is_some_and(|(name, detail)| *name == ErrorName::DeadlineExceeded
+                    && detail.contains("another call connecting")
+                    && detail.contains("50 ms ran out first")),
+            "{refused:?}"
+        );
+        drop(connecting);
+    }
+
+    /// A request whose connection failed while another connects goes on at once, and
+    /// leaves the connection the other made.
+    #[tokio::test]
+    async fn a_failed_request_never_waits_for_or_drops_a_newer_connection() {
+        let shared: Shared<&str> = Arc::default();
+        let connecting = shared.lock().await;
+        forget(&shared, 0);
+        drop(connecting);
+        {
+            let mut slot = shared.lock().await;
+            slot.connection = Some("the newer one");
+            slot.generation = 2;
+        }
+
+        forget(&shared, 1);
+
+        assert_eq!(shared.lock().await.connection, Some("the newer one"));
+        forget(&shared, 2);
+        assert_eq!(shared.lock().await.connection, None);
+    }
 
     #[tokio::test]
     async fn without_a_session_bus_there_is_no_accessibility_bus() {
