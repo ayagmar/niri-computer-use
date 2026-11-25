@@ -854,6 +854,101 @@ mod script {
         assert_eq!(staged(&skills), Vec::<String>::new());
     }
 
+    /// A real TERM, as from Ctrl+C or `kill`, while the script runs piped into `sh` and has
+    /// set the installed skill aside, puts that skill back.
+    #[tokio::test]
+    async fn a_term_between_the_skills_two_renames_puts_the_previous_skill_back() {
+        let release = Release::new("term", "x86_64");
+        release.publish("0.0.9", "x86_64", None);
+        release.publish(LATEST, "x86_64", None);
+        let older = release.install(&[("NCU_VERSION", "0.0.9")]).await;
+        assert!(older.status.success(), "{older:?}");
+        release.fake(
+            "mv",
+            "case $1 in */skills/.niri-computer-use.new.*) kill -TERM \"$PPID\"; exit 0 ;; esac\nexec /bin/mv \"$@\"\n",
+        );
+
+        let output = release.install_piped(&[], None).await;
+
+        assert!(!output.status.success(), "{output:?}");
+        let home = release.home();
+        let link = home.join(".claude/skills/niri-computer-use");
+        assert_eq!(
+            std::fs::read_to_string(link.join("SKILL.md")).unwrap(),
+            "0.0.9"
+        );
+        let skills = home.join(".local/share/niri-computer-use/skills");
+        assert_eq!(staged(&skills), Vec::<String>::new());
+    }
+
+    /// A run killed after setting the skill aside leaves no skill; the next run puts that
+    /// copy back before anything else, so a next run that fails too still leaves one.
+    #[tokio::test]
+    async fn a_copy_a_killed_run_set_aside_comes_back_when_nothing_is_installed() {
+        let release = Release::new("orphan", "x86_64");
+        release.publish("0.0.9", "x86_64", None);
+        release.publish(LATEST, "x86_64", None);
+        let older = release.install(&[("NCU_VERSION", "0.0.9")]).await;
+        assert!(older.status.success(), "{older:?}");
+        let skills = release.home().join(".local/share/niri-computer-use/skills");
+        let dead = format!(".niri-computer-use.old.{}", pid_max() + 1);
+        std::fs::rename(skills.join("niri-computer-use"), skills.join(&dead)).unwrap();
+        release.fake(
+            "cp",
+            "case $1 in -R) echo 'cp: No space left on device' >&2; exit 1 ;; esac\nexec /bin/cp \"$@\"\n",
+        );
+
+        let output = release.install(&[]).await;
+
+        assert!(!output.status.success());
+        assert_eq!(
+            std::fs::read_to_string(skills.join("niri-computer-use/SKILL.md")).unwrap(),
+            "0.0.9"
+        );
+        assert_eq!(staged(&skills), Vec::<String>::new());
+    }
+
+    /// Two runs at once, with the rename that sets the installed skill aside slowed so
+    /// they would overlap, both finish and leave one skill, not one inside the other.
+    #[tokio::test]
+    async fn two_runs_at_once_both_finish_and_leave_one_skill() {
+        let release = Release::new("concurrent", "x86_64");
+        release.publish("0.0.9", "x86_64", None);
+        release.publish(LATEST, "x86_64", None);
+        let older = release.install(&[("NCU_VERSION", "0.0.9")]).await;
+        assert!(older.status.success(), "{older:?}");
+        release.fake(
+            "mv",
+            "case $2 in */skills/.niri-computer-use.old.*) sleep 0.3 ;; esac\nexec /bin/mv \"$@\"\n",
+        );
+
+        let (first, second) = tokio::join!(release.install(&[]), release.install(&[]));
+
+        assert!(first.status.success(), "{first:?}");
+        assert!(second.status.success(), "{second:?}");
+        let skills = release.home().join(".local/share/niri-computer-use/skills");
+        let skill = skills.join("niri-computer-use");
+        assert_eq!(
+            std::fs::read_to_string(skill.join("SKILL.md")).unwrap(),
+            LATEST
+        );
+        let mut inside: Vec<String> = std::fs::read_dir(&skill)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        inside.sort();
+        assert_eq!(inside, ["SKILL.md", "references"]);
+        assert_eq!(staged(&skills), Vec::<String>::new());
+    }
+
+    fn pid_max() -> u64 {
+        std::fs::read_to_string("/proc/sys/kernel/pid_max")
+            .unwrap()
+            .trim()
+            .parse()
+            .unwrap()
+    }
+
     #[tokio::test]
     async fn another_runs_staged_files_are_left_alone_and_a_dead_runs_removed() {
         let release = Release::new("two-runs", "x86_64");
@@ -863,12 +958,7 @@ mod script {
         // This test's own PID stands for a run still going; a PID past pid_max for one that
         // ended without its cleanup.
         let live = format!(".niri-computer-use.new.{}", std::process::id());
-        let max: u64 = std::fs::read_to_string("/proc/sys/kernel/pid_max")
-            .unwrap()
-            .trim()
-            .parse()
-            .unwrap();
-        let dead = format!(".niri-computer-use.new.{}", max + 1);
+        let dead = format!(".niri-computer-use.new.{}", pid_max() + 1);
         std::fs::write(bin.join(&live), "staged by another run").unwrap();
         std::fs::write(bin.join(&dead), "left by a killed run").unwrap();
 

@@ -40,7 +40,7 @@ case ${NCU_REGISTER:-} in
 *) fail "NCU_REGISTER must be 1 or 0, not ${NCU_REGISTER}; nothing was installed" ;;
 esac
 
-for tool in curl tar sha256sum uname mktemp; do
+for tool in curl tar sha256sum uname mktemp flock; do
 	command -v "${tool}" >/dev/null || fail "needs ${tool}, which isn't on PATH"
 done
 
@@ -84,10 +84,13 @@ installed_version=$("${tmp}/${name}/niri-computer-use" --version) || status=$?
 # replaces anything, so a failed copy leaves the previous install as it was. Each then
 # goes into place with a rename, so a running server keeps the binary it started with.
 # A release before the plugin has none, and leaves an installed one as it is. The staged
-# names carry this run's PID, so two runs at once can't remove each other's files. The
+# names carry this run's PID, and the steps from here to the links run under a lock, so
+# two runs at once neither remove each other's files nor interleave their renames. The
 # physical path is what /proc names a running binary by, so the check for old servers
 # below matches where a directory on the way is a link, as /home is on some systems.
 mkdir -p "${bin_dir}" "${data_dir}/skills" "${data_dir}/noctalia"
+exec 9>"${data_dir}/.install.lock"
+flock -w 60 9 || fail "another run of the install script has held ${data_dir}/.install.lock for a minute; nothing was replaced"
 bin_dir=$(cd "${bin_dir}" && pwd -P)
 binary=${bin_dir}/niri-computer-use
 skill=${data_dir}/skills/niri-computer-use
@@ -100,21 +103,30 @@ old_plugin=${data_dir}/noctalia/.niri-computer-use.old.$$
 
 # $1 the directory in place, $2 the one set aside: puts $2 back when $1 is missing, as
 # when the script is stopped between setting the old one aside and renaming the new one.
+# $2 stays when it can't be put back.
 put_back() {
-	if [ ! -e "$1" ] && [ -e "$2" ]; then mv "$2" "$1"; fi
+	if [ ! -e "$1" ] && [ -e "$2" ]; then
+		mv "$2" "$1" || return 0
+	fi
 	rm -rf "$2"
 }
 trap 'put_back "${skill}" "${old_skill}"; put_back "${plugin}" "${old_plugin}"; rm -rf "${tmp}" "${staged_binary}" "${staged_skill}" "${staged_plugin}"' EXIT
 
-# Removes what runs that ended without their cleanup left in $1: names ending in the PID
-# of no running process, and the unnumbered name earlier versions of this script staged under.
+# Clears what runs that ended without their cleanup left in $1: names ending in the PID
+# of no running process, and the unnumbered name earlier versions of this script staged
+# under. A copy set aside by such a run goes back to $1/niri-computer-use when nothing is
+# there, as after a run killed between its two renames.
 clear_stale() {
 	for left in "$1"/.niri-computer-use.new "$1"/.niri-computer-use.new.* "$1"/.niri-computer-use.old.*; do
 		[ -e "${left}" ] || [ -L "${left}" ] || continue
 		pid=${left##*.}
 		case ${pid} in
-		*[!0-9]* | '') rm -rf "${left}" ;;
-		*) [ -d "/proc/${pid}" ] || rm -rf "${left}" ;;
+		*[!0-9]* | '') ;;
+		*) [ ! -d "/proc/${pid}" ] || continue ;;
+		esac
+		case ${left} in
+		*.old.*) put_back "$1/niri-computer-use" "${left}" ;;
+		*) rm -rf "${left}" ;;
 		esac
 	done
 }
@@ -134,7 +146,14 @@ fi
 # $1 the staged directory, $2 where it goes, $3 where the old one is set aside meanwhile.
 replace_dir() {
 	if [ -e "$2" ]; then mv "$2" "$3"; fi
-	mv "$1" "$2" || fail "couldn't put $2 in place; the previous one is back, so run the script again"
+	# A directory there now would take $1 inside it rather than be replaced.
+	[ ! -e "$2" ] || fail "something else put $2 back meanwhile; the previous one is in $3"
+	if ! mv "$1" "$2"; then
+		if [ -e "$2" ] || mv "$3" "$2"; then
+			fail "couldn't put $2 in place; the previous one is back, so run the script again"
+		fi
+		fail "couldn't put $2 in place, nor the previous one back; it is in $3"
+	fi
 	rm -rf "$3"
 }
 mv -f "${staged_binary}" "${binary}"
@@ -171,6 +190,9 @@ if [ -d "${plugin}" ] && command -v noctalia >/dev/null; then
 		echo "Noctalia lists the plugin as incompatible: it needs Noctalia 5.4 or newer."
 	fi
 fi
+# The files and links are in place; registration may wait on prompts, so another run
+# doesn't wait for it.
+exec 9>&-
 
 # Registration in the agents on PATH, each through its own `mcp add`, so no config file
 # is edited. Nothing here fails the install: an agent that refuses is reported with the
