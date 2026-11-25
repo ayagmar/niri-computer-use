@@ -148,10 +148,15 @@ impl A11y {
         &self.switch
     }
 
-    /// A request against the bus with `budget` from now for all its calls.
+    /// A request against the bus with `budget` from now for all its calls. Another
+    /// request may be connecting, for up to `CALL`, so waiting for it counts against the
+    /// budget too.
     pub(crate) async fn request(&self, budget: Duration) -> Result<Request, ToolError> {
         let deadline = Instant::now() + budget;
-        let mut cached = self.connection.lock().await;
+        let what = "wait for another call connecting to the accessibility bus";
+        let Ok(mut cached) = tokio::time::timeout_at(deadline, self.connection.lock()).await else {
+            return Err(late(what, Duration::ZERO));
+        };
         let connection = if let Some(connection) = cached.as_ref() {
             connection.clone()
         } else {
@@ -982,6 +987,28 @@ pub(crate) fn not_accessible(detail: String) -> ToolError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A request that has to wait for another one connecting, to a bus that answers late,
+    /// gives up at its own budget rather than the other's connect deadline.
+    #[tokio::test]
+    async fn waiting_for_another_connect_counts_against_the_budget() {
+        let a11y = A11y::new("unix:path=/nonexistent".to_owned(), None);
+        let connecting = a11y.connection.lock().await;
+        let started = std::time::Instant::now();
+
+        let refused = a11y.request(Duration::from_millis(50)).await.err();
+
+        assert!(started.elapsed() < Duration::from_millis(500));
+        let refused = refused.map(|error| (error.name, error.detail));
+        assert!(
+            refused
+                .as_ref()
+                .is_some_and(|(name, detail)| *name == ErrorName::DeadlineExceeded
+                    && detail.contains("another call connecting")),
+            "{refused:?}"
+        );
+        drop(connecting);
+    }
 
     #[tokio::test]
     async fn without_a_session_bus_there_is_no_accessibility_bus() {
