@@ -11,7 +11,7 @@ use serde_json::json;
 
 use super::envelope;
 use crate::Env;
-use crate::audit::{Audit, Call, Caller};
+use crate::audit::{Audit, Call, Caller, Pending};
 use crate::error::ToolError;
 use crate::session::Label;
 
@@ -57,16 +57,27 @@ impl Log {
         self.asked(&tool, client.as_deref())
     }
 
-    /// Logs `asked`, which this bridge answered with `error`.
+    /// Waits for the lines queued so far, as `Audit::flush` does, before the bridge exits.
+    pub(crate) async fn flush(&self) {
+        self.audit.flush().await;
+    }
+
+    /// Logs `asked`, which this bridge answered with `error`, waiting at most
+    /// `audit::WRITE_LIMIT` for its line.
     pub(crate) async fn answered(&self, asked: &Asked, error: &ToolError) {
+        let by = tokio::time::Instant::now() + crate::audit::WRITE_LIMIT;
+        self.queued(asked, error).wait(by).await;
+    }
+
+    /// Queues the line for `asked`, answered with `error`, for a caller that waits for
+    /// several under one deadline.
+    pub(crate) fn queued(&self, asked: &Asked, error: &ToolError) -> Pending {
         let session = Label::new(&asked.client, std::process::id()).to_string();
         let caller = Caller {
             session: &session,
             instance: self.instance.as_deref(),
         };
         let result = Ok(error.clone().into_result());
-        self.audit
-            .finish(&asked.call, caller, json!({}), &result)
-            .await;
+        self.audit.queue(&asked.call, caller, json!({}), &result)
     }
 }

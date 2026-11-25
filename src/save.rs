@@ -74,6 +74,15 @@ impl fmt::Display for Stalled {
     }
 }
 
+/// Clears its flag when dropped.
+struct Clear(&'static AtomicBool);
+
+impl Drop for Clear {
+    fn drop(&mut self) {
+        self.0.store(false, Ordering::Release);
+    }
+}
+
 /// Runs `job` on a thread of its own while `busy` is clear, and waits for it at most
 /// `limit`. A job that runs past it keeps `busy` set until it ends.
 async fn off_runtime<T: Send + 'static>(
@@ -88,8 +97,9 @@ async fn off_runtime<T: Send + 'static>(
     let spawned = std::thread::Builder::new()
         .name("save".to_owned())
         .spawn(move || {
+            // Clears `busy` however the job ends, a panic included.
+            let _clear = Clear(busy);
             let done = job();
-            busy.store(false, Ordering::Release);
             // The call may have stopped waiting; the job's work is done all the same.
             let _ignored = sent.send(done);
         });
@@ -196,6 +206,18 @@ mod tests {
         while BUSY.load(Ordering::Acquire) && std::time::Instant::now() < by {
             tokio::time::sleep(Duration::from_millis(5)).await;
         }
+        assert_eq!(off_runtime(&BUSY, limit, || 7).await, Ok(7));
+    }
+
+    /// A save whose thread panics fails that call and leaves the next one free to run.
+    #[tokio::test]
+    async fn a_save_that_panics_doesnt_refuse_the_next() {
+        static BUSY: AtomicBool = AtomicBool::new(false);
+        let limit = Duration::from_secs(5);
+
+        let panicked = off_runtime(&BUSY, limit, || -> i32 { panic!("the save panicked") }).await;
+
+        assert_eq!(panicked, Err(Stalled::Ended));
         assert_eq!(off_runtime(&BUSY, limit, || 7).await, Ok(7));
     }
 

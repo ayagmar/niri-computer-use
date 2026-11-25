@@ -45,7 +45,7 @@ const ROTATE_AT: u64 = 10 * 1024 * 1024;
 /// How many logs moved aside are kept: `audit.jsonl.1`, the newest, to `audit.jsonl.3`.
 const KEPT: u32 = 3;
 /// How long a call waits for its line to be written before it goes on without.
-const WRITE_LIMIT: Duration = Duration::from_secs(1);
+pub(crate) const WRITE_LIMIT: Duration = Duration::from_secs(1);
 /// How many lines may wait for the writer; a call that finds this many goes unlogged.
 const QUEUE: usize = 64;
 
@@ -59,6 +59,35 @@ pub(crate) struct Audit {
     last_error: Arc<Mutex<Option<String>>>,
     /// The writer thread's queue, started with the first line; `None` if it couldn't be.
     writer: Arc<OnceLock<Option<SyncSender<Job>>>>,
+}
+
+/// A line handed to the writer, to wait for.
+#[derive(Debug)]
+pub(crate) struct Pending {
+    audit: Audit,
+    /// Answered once the line is written; `None` when it never reached the writer.
+    written: Option<tokio::sync::oneshot::Receiver<()>>,
+}
+
+impl Pending {
+    /// Waits for the line until `by`. Past it the call goes on, and `status` says the
+    /// write is still pending.
+    pub(crate) async fn wait(self, by: tokio::time::Instant) {
+        let Some(written) = self.written else {
+            return;
+        };
+        let unlogged = match tokio::time::timeout_at(by, written).await {
+            Ok(Ok(())) => return,
+            Ok(Err(_)) => "the log's writer thread ended; this call went unlogged".to_owned(),
+            Err(_) => format!(
+                "a write took over {} s, as on a stalled file system; it is still pending",
+                WRITE_LIMIT.as_secs()
+            ),
+        };
+        if let Some(path) = &self.audit.path {
+            *self.audit.last() = Some(format!("{}: {unlogged}", path.display()));
+        }
+    }
 }
 
 /// One tool call, as written to the log.
@@ -161,14 +190,28 @@ impl Audit {
         }
     }
 
-    /// Logs a finished call: `args` is its metadata, and the outcome comes from `result`.
+    /// Logs a finished call, waiting at most `WRITE_LIMIT` for its line: `args` is its
+    /// metadata, and the outcome comes from `result`.
     pub(crate) async fn finish(
+        &self,
+        call: &Call<'_>,
+        caller: Caller<'_>,
+        args: Value,
+        result: &Result<CallToolResult, ErrorData>,
+    ) {
+        let by = tokio::time::Instant::now() + WRITE_LIMIT;
+        self.queue(call, caller, args, result).wait(by).await;
+    }
+
+    /// Queues a finished call's line without waiting for it, for a caller that logs
+    /// several and waits for them under one deadline (`Pending::wait`).
+    pub(crate) fn queue(
         &self,
         call: &Call<'_>,
         caller: Caller<'_>,
         mut args: Value,
         result: &Result<CallToolResult, ErrorData>,
-    ) {
+    ) -> Pending {
         matched(&mut args, result);
         let reported = if call.action {
             reported(result)
@@ -176,7 +219,7 @@ impl Audit {
             Reported::default()
         };
         let summary = summarize(&reported, result);
-        self.write(&Record {
+        self.queue_record(&Record {
             ts: &call.ts,
             session: caller.session,
             instance: caller.instance,
@@ -190,47 +233,88 @@ impl Audit {
             may_have_sent: may_have_sent(result),
             duration_ms: call.started.elapsed().as_millis(),
         })
-        .await;
     }
 
-    /// Appends one line through the writer, waiting at most `WRITE_LIMIT`. A failure is
-    /// kept for `status` and doesn't fail the tool call.
+    /// Appends one line through the writer, waiting at most `WRITE_LIMIT`.
+    #[cfg(test)]
     async fn write(&self, record: &Record<'_>) {
+        let by = tokio::time::Instant::now() + WRITE_LIMIT;
+        self.queue_record(record).wait(by).await;
+    }
+
+    /// Queues one line for the writer. A failure is kept for `status` and doesn't fail
+    /// the tool call.
+    fn queue_record(&self, record: &Record<'_>) -> Pending {
+        let unqueued = Pending {
+            audit: self.clone(),
+            written: None,
+        };
         let Some(path) = &self.path else {
-            return;
+            return unqueued;
         };
         let line = match serde_json::to_vec(record) {
             Ok(line) => line,
             Err(error) => {
                 *self.last() = Some(error.to_string());
-                return;
+                return unqueued;
             }
         };
+        match self.send(path, line) {
+            Ok(written) => Pending {
+                written: Some(written),
+                ..unqueued
+            },
+            Err(unlogged) => {
+                *self.last() = Some(format!("{}: {unlogged}", path.display()));
+                unqueued
+            }
+        }
+    }
+
+    /// Hands `line` to the writer; an empty one is written as nothing, so waiting for it
+    /// waits for every line before it.
+    fn send(
+        &self,
+        path: &Path,
+        line: Vec<u8>,
+    ) -> Result<tokio::sync::oneshot::Receiver<()>, String> {
         let Some(jobs) = self.writer(path) else {
-            *self.last() = Some(format!(
-                "{}: the log's writer thread couldn't be started; calls go unlogged",
-                path.display()
-            ));
-            return;
+            return Err(
+                "the log's writer thread couldn't be started; calls go unlogged".to_owned(),
+            );
         };
         let (done, written) = tokio::sync::oneshot::channel();
-        let unlogged = match jobs.try_send((line, done)) {
-            Ok(()) => match tokio::time::timeout(WRITE_LIMIT, written).await {
-                Ok(Ok(())) => return,
-                Ok(Err(_)) => "the log's writer thread ended; this call went unlogged".to_owned(),
-                Err(_) => format!(
-                    "a write took over {} s, as on a stalled file system; it is still pending",
-                    WRITE_LIMIT.as_secs()
-                ),
-            },
-            Err(TrySendError::Full(_)) => format!(
+        match jobs.try_send((line, done)) {
+            Ok(()) => Ok(written),
+            Err(TrySendError::Full(_)) => Err(format!(
                 "{QUEUE} lines are waiting to be written, as on a stalled file system; this call went unlogged"
-            ),
+            )),
             Err(TrySendError::Disconnected(_)) => {
-                "the log's writer thread ended; this call went unlogged".to_owned()
+                Err("the log's writer thread ended; this call went unlogged".to_owned())
             }
+        }
+    }
+
+    /// Waits until every line queued so far is written, at most `WRITE_LIMIT`, for a
+    /// server about to exit: the writer is a thread the process doesn't wait for. A log
+    /// still behind says so on stderr.
+    pub(crate) async fn flush(&self) {
+        let (Some(path), Some(_started)) = (&self.path, self.writer.get()) else {
+            return;
         };
-        *self.last() = Some(format!("{}: {unlogged}", path.display()));
+        let by = tokio::time::Instant::now() + WRITE_LIMIT;
+        let flushed = match self.send(path, Vec::new()) {
+            Ok(written) => tokio::time::timeout_at(by, written)
+                .await
+                .is_ok_and(|done| done.is_ok()),
+            Err(_) => false,
+        };
+        if !flushed {
+            crate::cli::print_error(&format!(
+                "the audit log {} was still being written when the server ended; its last lines may be missing",
+                path.display()
+            ));
+        }
     }
 
     /// The writer's queue, starting its thread for the first line.
@@ -264,6 +348,10 @@ fn write_each(
     last_error: &Mutex<Option<String>>,
 ) {
     for (line, done) in queue {
+        if line.is_empty() {
+            let _ignored = done.send(());
+            continue;
+        }
         if let Err(error) = append(path, &line, ROTATE_AT) {
             *last_error.lock().unwrap_or_else(PoisonError::into_inner) = Some(error.to_string());
         }
@@ -704,12 +792,21 @@ mod tests {
         std::fs::remove_dir_all(dir).unwrap();
     }
 
-    /// A log that can't be opened, here a FIFO nobody reads, as a stalled NFS or FUSE state
-    /// directory would, holds a call up for at most `WRITE_LIMIT`, and the line is written
-    /// once the file opens.
-    #[tokio::test]
-    async fn a_stalled_log_holds_a_call_up_for_at_most_its_limit() {
-        let dir = crate::test_support::fresh_dir("audit-stalled");
+    /// A FIFO at the log's path, which blocks the writer's open as a stalled NFS or FUSE
+    /// state directory would, and a reader that opens it once released, or after five
+    /// seconds whatever happens, so a regression fails the test rather than hanging it.
+    /// Each line is appended through an open of its own, so the reader opens the FIFO again
+    /// until it has read `lines`.
+    fn stalled_log(
+        name: &str,
+        lines: usize,
+    ) -> (
+        PathBuf,
+        Audit,
+        std::sync::mpsc::Sender<()>,
+        std::thread::JoinHandle<String>,
+    ) {
+        let dir = crate::test_support::fresh_dir(name);
         let log = dir.join("niri-computer-use/audit.jsonl");
         std::fs::create_dir_all(log.parent().unwrap()).unwrap();
         rustix::fs::mknodat(
@@ -720,20 +817,71 @@ mod tests {
             0,
         )
         .unwrap();
-        let audit = Audit::new(Some(dir.clone()));
+        let (release, released) = std::sync::mpsc::channel::<()>();
+        let reader = std::thread::spawn(move || {
+            let _released_or_timed_out = released.recv_timeout(Duration::from_secs(5));
+            let mut text = String::new();
+            while text.lines().count() < lines {
+                text.push_str(&std::fs::read_to_string(&log).unwrap());
+            }
+            text
+        });
+        (dir.clone(), Audit::new(Some(dir)), release, reader)
+    }
+
+    /// A stalled log holds a call up for at most `WRITE_LIMIT`, and the line is written
+    /// once the file opens.
+    #[tokio::test]
+    async fn a_stalled_log_holds_a_call_up_for_at_most_its_limit() {
+        let (dir, audit, release, reader) = stalled_log("audit-stalled", 1);
 
         let started = Instant::now();
         audit.write(&record("status", &Value::Null, None)).await;
+        let took = started.elapsed();
 
-        assert!(started.elapsed() < WRITE_LIMIT + Duration::from_millis(500));
+        release.send(()).ok();
+        let text = reader.join().unwrap();
+        assert!(took < WRITE_LIMIT + Duration::from_millis(500), "{took:?}");
         let error = audit.status().last_error.unwrap_or_default();
         assert!(error.contains("still pending"), "{error}");
-        let read = tokio::task::spawn_blocking(move || std::fs::read_to_string(log).unwrap());
-        let text = tokio::time::timeout(Duration::from_secs(5), read)
-            .await
-            .unwrap()
-            .unwrap();
         assert!(text.contains("\"tool\":\"status\""), "{text}");
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// Lines queued together and waited for under one deadline, as a bridge answering
+    /// every call in flight does, hold it up once in all, and a flush before exit writes
+    /// every one of them once the log opens.
+    #[tokio::test]
+    async fn lines_waited_for_under_one_deadline_hold_it_up_once() {
+        let (dir, audit, release, reader) = stalled_log("audit-stalled-many", 3);
+        let caller = Caller {
+            session: "smoke/1",
+            instance: None,
+        };
+        let refused = ToolError::new(ErrorName::EngineLost, "the engine ended").into_result();
+
+        let started = Instant::now();
+        let pending: Vec<Pending> = (0..3)
+            .map(|_| {
+                audit.queue(
+                    &Call::action("key"),
+                    caller,
+                    json!({}),
+                    &Ok(refused.clone()),
+                )
+            })
+            .collect();
+        let by = tokio::time::Instant::now() + WRITE_LIMIT;
+        for line in pending {
+            line.wait(by).await;
+        }
+        let took = started.elapsed();
+        release.send(()).ok();
+        audit.flush().await;
+
+        let text = reader.join().unwrap();
+        assert!(took < WRITE_LIMIT + Duration::from_millis(500), "{took:?}");
+        assert_eq!(text.lines().count(), 3, "{text}");
         std::fs::remove_dir_all(dir).unwrap();
     }
 
